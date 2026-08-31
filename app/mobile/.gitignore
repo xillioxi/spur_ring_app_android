@@ -1,0 +1,18 @@
+node_modules/
+.expo/
+dist/
+build/
+coverage/
+*.log
+.DS_Store
+
+# Android — ignore build outputs only (keep src, libs, gradle)
+android/app/build/
+android/build/
+android/.gradle/
+android/local.properties
+
+# iOS — ignore generated deps/build only (keep xcodeproj, Podfile, native src)
+ios/build/
+ios/Pods/
+ios/DerivedData/

@@ -1,0 +1,8 @@
+{
+  "name": "@spur/office-pptx",
+  "private": true,
+  "type": "module",
+  "dependencies": {
+    "pptxgenjs": "^3.12.0"
+  }
+}

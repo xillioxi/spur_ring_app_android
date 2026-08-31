@@ -1,0 +1,11 @@
+framework module RingSDK {
+  umbrella header "RingSDK.h"
+  export *
+
+  module * { export * }
+}
+
+module RingSDK.Swift {
+  header "RingSDK-Swift.h"
+  requires objc
+}

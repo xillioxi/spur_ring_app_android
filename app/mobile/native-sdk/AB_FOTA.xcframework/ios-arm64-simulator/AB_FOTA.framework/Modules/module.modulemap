@@ -1,0 +1,5 @@
+framework module AB_FOTA {
+  umbrella header "AB_FOTA.h"
+  export *
+  module * { export * }
+}

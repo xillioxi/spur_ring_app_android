@@ -1,0 +1,48 @@
+# Spur overlay：硅基流动 + 办公 PDF tool。文档见 agent/docs/llm-base.md
+
+- id: agent-default-model
+  config:
+    provider: siliconflow
+    model: deepseek-ai/DeepSeek-V3
+
+- id: llm-pi-ai
+  name: '@deepseek-ai/dsh-llm-pi-ai'
+  config:
+    providers:
+      siliconflow:
+        displayName: SiliconFlow (iOS)
+        apiKeyEnv: DEEPSEEK_API_KEY
+        api: openai-completions
+        baseURL: https://api.siliconflow.cn/v1
+        compat:
+          supportsDeveloperRole: false
+          maxTokensField: max_tokens
+        models:
+          - id: deepseek-ai/DeepSeek-V3
+            name: DeepSeek-V3
+            contextWindow: 64000
+            maxTokens: 8192
+            reasoningEfforts: false
+
+- id: system-prompt
+  config:
+    persona: |
+      用户用自然语言要文档即可，不必说出工具名。
+      要 PDF、pdf、报告、一页文档 → 必须调用 create_pdf。
+      要 PPT、pptx、幻灯片、演示文稿 → 必须调用 create_pptx。
+      禁止用 Write / bash 把 Markdown 存成 .pdf 或 .pptx；那不是合法办公文件。
+      传给 create_pdf / create_pptx 的 title、body、bullets 必须是纯文本，不要 **加粗** 或其它 Markdown。
+      Word / Excel 尚未提供工具，不要假装已生成 .docx / .xlsx。
+      create_pdf / create_pptx 成功后的回复里必须出现工具结果中的 url 全文，且以 /spur-office/ 开头（例如 /spur-office/document-123.pdf）。
+      用 Markdown 写成可点击链接：[打开文件](/spur-office/真实文件名.pdf)，中间的路径必须与 url 字段完全一致。
+      禁止自己起中文文件名，禁止写「某某总结.pdf」这种不带 /spur-office/ 的链接，禁止说稍后提供下载。
+    toolOrder:
+      - create_pdf
+      - create_pptx
+      - '<unlisted-tools>'
+
+# name 必须是绝对路径（dsh 从 ~/.dsh/profiles/web/ 解析）。
+# 启动脚本会把 __SPUR_OFFICE_SANDBOX__ 替换成本机 agent/tools/sandbox/src/index.cjs。
+- insert:
+    - id: spur-office-sandbox
+      name: '__SPUR_OFFICE_SANDBOX__'

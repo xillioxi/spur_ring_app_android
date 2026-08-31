@@ -1,0 +1,1620 @@
+{
+  "ABIRoot": {
+    "kind": "Root",
+    "name": "RingSDK",
+    "printedName": "RingSDK",
+    "children": [
+      {
+        "kind": "Import",
+        "name": "UIKit",
+        "printedName": "UIKit",
+        "declKind": "Import",
+        "moduleName": "RingSDK",
+        "declAttributes": [
+          "RawDocComment"
+        ]
+      },
+      {
+        "kind": "Import",
+        "name": "MobileCoreServices",
+        "printedName": "MobileCoreServices",
+        "declKind": "Import",
+        "moduleName": "RingSDK"
+      },
+      {
+        "kind": "TypeDecl",
+        "name": "DocumentPickerHelper",
+        "printedName": "DocumentPickerHelper",
+        "children": [
+          {
+            "kind": "Var",
+            "name": "shared",
+            "printedName": "shared",
+            "children": [
+              {
+                "kind": "TypeNominal",
+                "name": "DocumentPickerHelper",
+                "printedName": "RingSDK.DocumentPickerHelper",
+                "usr": "c:@M@RingSDK@objc(cs)DocumentPickerHelper"
+              }
+            ],
+            "declKind": "Var",
+            "usr": "c:@M@RingSDK@objc(cs)DocumentPickerHelper(cpy)shared",
+            "mangledName": "$s7RingSDK20DocumentPickerHelperC6sharedACvpZ",
+            "moduleName": "RingSDK",
+            "static": true,
+            "declAttributes": [
+              "HasInitialValue",
+              "Final",
+              "HasStorage",
+              "Preconcurrency",
+              "Custom",
+              "AccessControl",
+              "RawDocComment",
+              "ObjC"
+            ],
+            "isLet": true,
+            "hasStorage": true,
+            "accessors": [
+              {
+                "kind": "Accessor",
+                "name": "Get",
+                "printedName": "Get()",
+                "children": [
+                  {
+                    "kind": "TypeNominal",
+                    "name": "DocumentPickerHelper",
+                    "printedName": "RingSDK.DocumentPickerHelper",
+                    "usr": "c:@M@RingSDK@objc(cs)DocumentPickerHelper"
+                  }
+                ],
+                "declKind": "Accessor",
+                "usr": "c:@M@RingSDK@objc(cs)DocumentPickerHelper(cm)shared",
+                "mangledName": "$s7RingSDK20DocumentPickerHelperC6sharedACvgZ",
+                "moduleName": "RingSDK",
+                "static": true,
+                "implicit": true,
+                "declAttributes": [
+                  "Final",
+                  "ObjC"
+                ],
+                "accessorKind": "get"
+              }
+            ]
+          },
+          {
+            "kind": "Function",
+            "name": "pickDocument",
+            "printedName": "pickDocument(from:completion:)",
+            "children": [
+              {
+                "kind": "TypeNominal",
+                "name": "Void",
+                "printedName": "()"
+              },
+              {
+                "kind": "TypeNominal",
+                "name": "UIViewController",
+                "printedName": "UIKit.UIViewController",
+                "usr": "c:objc(cs)UIViewController"
+              },
+              {
+                "kind": "TypeFunc",
+                "name": "Function",
+                "printedName": "(Swift.String?) -> ()",
+                "children": [
+                  {
+                    "kind": "TypeNominal",
+                    "name": "Void",
+                    "printedName": "()"
+                  },
+                  {
+                    "kind": "TypeNominal",
+                    "name": "Optional",
+                    "printedName": "Swift.String?",
+                    "children": [
+                      {
+                        "kind": "TypeNominal",
+                        "name": "String",
+                        "printedName": "Swift.String",
+                        "usr": "s:SS"
+                      }
+                    ],
+                    "usr": "s:Sq"
+                  }
+                ]
+              }
+            ],
+            "declKind": "Func",
+            "usr": "c:@M@RingSDK@objc(cs)DocumentPickerHelper(im)pickDocumentFrom:completion:",
+            "mangledName": "$s7RingSDK20DocumentPickerHelperC04pickC04from10completionySo16UIViewControllerC_ySSSgctF",
+            "moduleName": "RingSDK",
+            "objc_name": "pickDocumentFrom:completion:",
+            "declAttributes": [
+              "Preconcurrency",
+              "Custom",
+              "AccessControl",
+              "ObjC",
+              "RawDocComment"
+            ],
+            "funcSelfKind": "NonMutating"
+          },
+          {
+            "kind": "Function",
+            "name": "documentPicker",
+            "printedName": "documentPicker(_:didPickDocumentsAt:)",
+            "children": [
+              {
+                "kind": "TypeNominal",
+                "name": "Void",
+                "printedName": "()"
+              },
+              {
+                "kind": "TypeNominal",
+                "name": "UIDocumentPickerViewController",
+                "printedName": "UIKit.UIDocumentPickerViewController",
+                "usr": "c:objc(cs)UIDocumentPickerViewController"
+              },
+              {
+                "kind": "TypeNominal",
+                "name": "Array",
+                "printedName": "[Foundation.URL]",
+                "children": [
+                  {
+                    "kind": "TypeNominal",
+                    "name": "URL",
+                    "printedName": "Foundation.URL",
+                    "usr": "s:10Foundation3URLV"
+                  }
+                ],
+                "usr": "s:Sa"
+              }
+            ],
+            "declKind": "Func",
+            "usr": "c:@M@RingSDK@objc(cs)DocumentPickerHelper(im)documentPicker:didPickDocumentsAtURLs:",
+            "mangledName": "$s7RingSDK20DocumentPickerHelperC08documentD0_18didPickDocumentsAtySo010UIDocumentD14ViewControllerC_Say10Foundation3URLVGtF",
+            "moduleName": "RingSDK",
+            "objc_name": "documentPicker:didPickDocumentsAtURLs:",
+            "declAttributes": [
+              "ObjC",
+              "Preconcurrency",
+              "Custom",
+              "AccessControl",
+              "RawDocComment"
+            ],
+            "funcSelfKind": "NonMutating"
+          },
+          {
+            "kind": "Function",
+            "name": "documentPickerWasCancelled",
+            "printedName": "documentPickerWasCancelled(_:)",
+            "children": [
+              {
+                "kind": "TypeNominal",
+                "name": "Void",
+                "printedName": "()"
+              },
+              {
+                "kind": "TypeNominal",
+                "name": "UIDocumentPickerViewController",
+                "printedName": "UIKit.UIDocumentPickerViewController",
+                "usr": "c:objc(cs)UIDocumentPickerViewController"
+              }
+            ],
+            "declKind": "Func",
+            "usr": "c:@M@RingSDK@objc(cs)DocumentPickerHelper(im)documentPickerWasCancelled:",
+            "mangledName": "$s7RingSDK20DocumentPickerHelperC08documentD12WasCancelledyySo010UIDocumentD14ViewControllerCF",
+            "moduleName": "RingSDK",
+            "objc_name": "documentPickerWasCancelled:",
+            "declAttributes": [
+              "ObjC",
+              "Preconcurrency",
+              "Custom",
+              "AccessControl"
+            ],
+            "funcSelfKind": "NonMutating"
+          },
+          {
+            "kind": "Function",
+            "name": "downloadFirmware",
+            "printedName": "downloadFirmware(from:completion:)",
+            "children": [
+              {
+                "kind": "TypeNominal",
+                "name": "Void",
+                "printedName": "()"
+              },
+              {
+                "kind": "TypeNominal",
+                "name": "String",
+                "printedName": "Swift.String",
+                "usr": "s:SS"
+              },
+              {
+                "kind": "TypeFunc",
+                "name": "Function",
+                "printedName": "(Swift.Result<Foundation.URL, any Swift.Error>) -> ()",
+                "children": [
+                  {
+                    "kind": "TypeNominal",
+                    "name": "Void",
+                    "printedName": "()"
+                  },
+                  {
+                    "kind": "TypeNominal",
+                    "name": "Result",
+                    "printedName": "Swift.Result<Foundation.URL, any Swift.Error>",
+                    "children": [
+                      {
+                        "kind": "TypeNominal",
+                        "name": "URL",
+                        "printedName": "Foundation.URL",
+                        "usr": "s:10Foundation3URLV"
+                      },
+                      {
+                        "kind": "TypeNominal",
+                        "name": "Error",
+                        "printedName": "any Swift.Error",
+                        "usr": "s:s5ErrorP"
+                      }
+                    ],
+                    "usr": "s:s6ResultO"
+                  }
+                ]
+              }
+            ],
+            "declKind": "Func",
+            "usr": "s:7RingSDK20DocumentPickerHelperC16downloadFirmware4from10completionySS_ys6ResultOy10Foundation3URLVs5Error_pGctF",
+            "mangledName": "$s7RingSDK20DocumentPickerHelperC16downloadFirmware4from10completionySS_ys6ResultOy10Foundation3URLVs5Error_pGctF",
+            "moduleName": "RingSDK",
+            "declAttributes": [
+              "Preconcurrency",
+              "Custom",
+              "AccessControl"
+            ],
+            "funcSelfKind": "NonMutating"
+          },
+          {
+            "kind": "Constructor",
+            "name": "init",
+            "printedName": "init()",
+            "children": [
+              {
+                "kind": "TypeNominal",
+                "name": "DocumentPickerHelper",
+                "printedName": "RingSDK.DocumentPickerHelper",
+                "usr": "c:@M@RingSDK@objc(cs)DocumentPickerHelper"
+              }
+            ],
+            "declKind": "Constructor",
+            "usr": "c:@M@RingSDK@objc(cs)DocumentPickerHelper(im)init",
+            "mangledName": "$s7RingSDK20DocumentPickerHelperCACycfc",
+            "moduleName": "RingSDK",
+            "overriding": true,
+            "implicit": true,
+            "objc_name": "init",
+            "declAttributes": [
+              "Dynamic",
+              "ObjC",
+              "Preconcurrency",
+              "Custom",
+              "Override"
+            ],
+            "init_kind": "Designated"
+          }
+        ],
+        "declKind": "Class",
+        "usr": "c:@M@RingSDK@objc(cs)DocumentPickerHelper",
+        "mangledName": "$s7RingSDK20DocumentPickerHelperC",
+        "moduleName": "RingSDK",
+        "declAttributes": [
+          "Preconcurrency",
+          "Custom",
+          "AccessControl",
+          "ObjCMembers",
+          "ObjC"
+        ],
+        "superclassUsr": "c:objc(cs)NSObject",
+        "inheritsConvenienceInitializers": true,
+        "superclassNames": [
+          "ObjectiveC.NSObject"
+        ],
+        "conformances": [
+          {
+            "kind": "Conformance",
+            "name": "Copyable",
+            "printedName": "Copyable",
+            "usr": "s:s8CopyableP",
+            "mangledName": "$ss8CopyableP"
+          },
+          {
+            "kind": "Conformance",
+            "name": "Escapable",
+            "printedName": "Escapable",
+            "usr": "s:s9EscapableP",
+            "mangledName": "$ss9EscapableP"
+          },
+          {
+            "kind": "Conformance",
+            "name": "Equatable",
+            "printedName": "Equatable",
+            "usr": "s:SQ",
+            "mangledName": "$sSQ"
+          },
+          {
+            "kind": "Conformance",
+            "name": "Hashable",
+            "printedName": "Hashable",
+            "usr": "s:SH",
+            "mangledName": "$sSH"
+          },
+          {
+            "kind": "Conformance",
+            "name": "CVarArg",
+            "printedName": "CVarArg",
+            "usr": "s:s7CVarArgP",
+            "mangledName": "$ss7CVarArgP"
+          },
+          {
+            "kind": "Conformance",
+            "name": "_KeyValueCodingAndObservingPublishing",
+            "printedName": "_KeyValueCodingAndObservingPublishing",
+            "usr": "s:10Foundation37_KeyValueCodingAndObservingPublishingP",
+            "mangledName": "$s10Foundation37_KeyValueCodingAndObservingPublishingP"
+          },
+          {
+            "kind": "Conformance",
+            "name": "_KeyValueCodingAndObserving",
+            "printedName": "_KeyValueCodingAndObserving",
+            "usr": "s:10Foundation27_KeyValueCodingAndObservingP",
+            "mangledName": "$s10Foundation27_KeyValueCodingAndObservingP"
+          },
+          {
+            "kind": "Conformance",
+            "name": "CustomStringConvertible",
+            "printedName": "CustomStringConvertible",
+            "usr": "s:s23CustomStringConvertibleP",
+            "mangledName": "$ss23CustomStringConvertibleP"
+          },
+          {
+            "kind": "Conformance",
+            "name": "CustomDebugStringConvertible",
+            "printedName": "CustomDebugStringConvertible",
+            "usr": "s:s28CustomDebugStringConvertibleP",
+            "mangledName": "$ss28CustomDebugStringConvertibleP"
+          },
+          {
+            "kind": "Conformance",
+            "name": "Sendable",
+            "printedName": "Sendable",
+            "usr": "s:s8SendableP",
+            "mangledName": "$ss8SendableP"
+          }
+        ]
+      },
+      {
+        "kind": "Import",
+        "name": "UIKit",
+        "printedName": "UIKit",
+        "declKind": "Import",
+        "moduleName": "RingSDK",
+        "declAttributes": [
+          "RawDocComment"
+        ]
+      },
+      {
+        "kind": "Import",
+        "name": "Foundation",
+        "printedName": "Foundation",
+        "declKind": "Import",
+        "moduleName": "RingSDK"
+      },
+      {
+        "kind": "Import",
+        "name": "CoreBluetooth",
+        "printedName": "CoreBluetooth",
+        "declKind": "Import",
+        "moduleName": "RingSDK"
+      },
+      {
+        "kind": "Import",
+        "name": "AB_FOTA",
+        "printedName": "AB_FOTA",
+        "declKind": "Import",
+        "moduleName": "RingSDK"
+      },
+      {
+        "kind": "TypeDecl",
+        "name": "OTAStatus",
+        "printedName": "OTAStatus",
+        "children": [
+          {
+            "kind": "Var",
+            "name": "ready",
+            "printedName": "ready",
+            "children": [
+              {
+                "kind": "TypeFunc",
+                "name": "Function",
+                "printedName": "(RingSDK.OTAStatus.Type) -> RingSDK.OTAStatus",
+                "children": [
+                  {
+                    "kind": "TypeNominal",
+                    "name": "OTAStatus",
+                    "printedName": "RingSDK.OTAStatus",
+                    "usr": "s:7RingSDK9OTAStatusO"
+                  },
+                  {
+                    "kind": "TypeNominal",
+                    "name": "Metatype",
+                    "printedName": "RingSDK.OTAStatus.Type",
+                    "children": [
+                      {
+                        "kind": "TypeNominal",
+                        "name": "OTAStatus",
+                        "printedName": "RingSDK.OTAStatus",
+                        "usr": "s:7RingSDK9OTAStatusO"
+                      }
+                    ]
+                  }
+                ]
+              }
+            ],
+            "declKind": "EnumElement",
+            "usr": "s:7RingSDK9OTAStatusO5readyyA2CmF",
+            "mangledName": "$s7RingSDK9OTAStatusO5readyyA2CmF",
+            "moduleName": "RingSDK"
+          },
+          {
+            "kind": "Var",
+            "name": "start",
+            "printedName": "start",
+            "children": [
+              {
+                "kind": "TypeFunc",
+                "name": "Function",
+                "printedName": "(RingSDK.OTAStatus.Type) -> RingSDK.OTAStatus",
+                "children": [
+                  {
+                    "kind": "TypeNominal",
+                    "name": "OTAStatus",
+                    "printedName": "RingSDK.OTAStatus",
+                    "usr": "s:7RingSDK9OTAStatusO"
+                  },
+                  {
+                    "kind": "TypeNominal",
+                    "name": "Metatype",
+                    "printedName": "RingSDK.OTAStatus.Type",
+                    "children": [
+                      {
+                        "kind": "TypeNominal",
+                        "name": "OTAStatus",
+                        "printedName": "RingSDK.OTAStatus",
+                        "usr": "s:7RingSDK9OTAStatusO"
+                      }
+                    ]
+                  }
+                ]
+              }
+            ],
+            "declKind": "EnumElement",
+            "usr": "s:7RingSDK9OTAStatusO5startyA2CmF",
+            "mangledName": "$s7RingSDK9OTAStatusO5startyA2CmF",
+            "moduleName": "RingSDK"
+          },
+          {
+            "kind": "Var",
+            "name": "updating",
+            "printedName": "updating",
+            "children": [
+              {
+                "kind": "TypeFunc",
+                "name": "Function",
+                "printedName": "(RingSDK.OTAStatus.Type) -> RingSDK.OTAStatus",
+                "children": [
+                  {
+                    "kind": "TypeNominal",
+                    "name": "OTAStatus",
+                    "printedName": "RingSDK.OTAStatus",
+                    "usr": "s:7RingSDK9OTAStatusO"
+                  },
+                  {
+                    "kind": "TypeNominal",
+                    "name": "Metatype",
+                    "printedName": "RingSDK.OTAStatus.Type",
+                    "children": [
+                      {
+                        "kind": "TypeNominal",
+                        "name": "OTAStatus",
+                        "printedName": "RingSDK.OTAStatus",
+                        "usr": "s:7RingSDK9OTAStatusO"
+                      }
+                    ]
+                  }
+                ]
+              }
+            ],
+            "declKind": "EnumElement",
+            "usr": "s:7RingSDK9OTAStatusO8updatingyA2CmF",
+            "mangledName": "$s7RingSDK9OTAStatusO8updatingyA2CmF",
+            "moduleName": "RingSDK"
+          },
+          {
+            "kind": "Var",
+            "name": "pause",
+            "printedName": "pause",
+            "children": [
+              {
+                "kind": "TypeFunc",
+                "name": "Function",
+                "printedName": "(RingSDK.OTAStatus.Type) -> RingSDK.OTAStatus",
+                "children": [
+                  {
+                    "kind": "TypeNominal",
+                    "name": "OTAStatus",
+                    "printedName": "RingSDK.OTAStatus",
+                    "usr": "s:7RingSDK9OTAStatusO"
+                  },
+                  {
+                    "kind": "TypeNominal",
+                    "name": "Metatype",
+                    "printedName": "RingSDK.OTAStatus.Type",
+                    "children": [
+                      {
+                        "kind": "TypeNominal",
+                        "name": "OTAStatus",
+                        "printedName": "RingSDK.OTAStatus",
+                        "usr": "s:7RingSDK9OTAStatusO"
+                      }
+                    ]
+                  }
+                ]
+              }
+            ],
+            "declKind": "EnumElement",
+            "usr": "s:7RingSDK9OTAStatusO5pauseyA2CmF",
+            "mangledName": "$s7RingSDK9OTAStatusO5pauseyA2CmF",
+            "moduleName": "RingSDK"
+          },
+          {
+            "kind": "Var",
+            "name": "continue",
+            "printedName": "continue",
+            "children": [
+              {
+                "kind": "TypeFunc",
+                "name": "Function",
+                "printedName": "(RingSDK.OTAStatus.Type) -> RingSDK.OTAStatus",
+                "children": [
+                  {
+                    "kind": "TypeNominal",
+                    "name": "OTAStatus",
+                    "printedName": "RingSDK.OTAStatus",
+                    "usr": "s:7RingSDK9OTAStatusO"
+                  },
+                  {
+                    "kind": "TypeNominal",
+                    "name": "Metatype",
+                    "printedName": "RingSDK.OTAStatus.Type",
+                    "children": [
+                      {
+                        "kind": "TypeNominal",
+                        "name": "OTAStatus",
+                        "printedName": "RingSDK.OTAStatus",
+                        "usr": "s:7RingSDK9OTAStatusO"
+                      }
+                    ]
+                  }
+                ]
+              }
+            ],
+            "declKind": "EnumElement",
+            "usr": "s:7RingSDK9OTAStatusO8continueyA2CmF",
+            "mangledName": "$s7RingSDK9OTAStatusO8continueyA2CmF",
+            "moduleName": "RingSDK"
+          },
+          {
+            "kind": "Var",
+            "name": "success",
+            "printedName": "success",
+            "children": [
+              {
+                "kind": "TypeFunc",
+                "name": "Function",
+                "printedName": "(RingSDK.OTAStatus.Type) -> RingSDK.OTAStatus",
+                "children": [
+                  {
+                    "kind": "TypeNominal",
+                    "name": "OTAStatus",
+                    "printedName": "RingSDK.OTAStatus",
+                    "usr": "s:7RingSDK9OTAStatusO"
+                  },
+                  {
+                    "kind": "TypeNominal",
+                    "name": "Metatype",
+                    "printedName": "RingSDK.OTAStatus.Type",
+                    "children": [
+                      {
+                        "kind": "TypeNominal",
+                        "name": "OTAStatus",
+                        "printedName": "RingSDK.OTAStatus",
+                        "usr": "s:7RingSDK9OTAStatusO"
+                      }
+                    ]
+                  }
+                ]
+              }
+            ],
+            "declKind": "EnumElement",
+            "usr": "s:7RingSDK9OTAStatusO7successyA2CmF",
+            "mangledName": "$s7RingSDK9OTAStatusO7successyA2CmF",
+            "moduleName": "RingSDK"
+          },
+          {
+            "kind": "Var",
+            "name": "waitFinish",
+            "printedName": "waitFinish",
+            "children": [
+              {
+                "kind": "TypeFunc",
+                "name": "Function",
+                "printedName": "(RingSDK.OTAStatus.Type) -> RingSDK.OTAStatus",
+                "children": [
+                  {
+                    "kind": "TypeNominal",
+                    "name": "OTAStatus",
+                    "printedName": "RingSDK.OTAStatus",
+                    "usr": "s:7RingSDK9OTAStatusO"
+                  },
+                  {
+                    "kind": "TypeNominal",
+                    "name": "Metatype",
+                    "printedName": "RingSDK.OTAStatus.Type",
+                    "children": [
+                      {
+                        "kind": "TypeNominal",
+                        "name": "OTAStatus",
+                        "printedName": "RingSDK.OTAStatus",
+                        "usr": "s:7RingSDK9OTAStatusO"
+                      }
+                    ]
+                  }
+                ]
+              }
+            ],
+            "declKind": "EnumElement",
+            "usr": "s:7RingSDK9OTAStatusO10waitFinishyA2CmF",
+            "mangledName": "$s7RingSDK9OTAStatusO10waitFinishyA2CmF",
+            "moduleName": "RingSDK"
+          },
+          {
+            "kind": "Var",
+            "name": "fail",
+            "printedName": "fail",
+            "children": [
+              {
+                "kind": "TypeFunc",
+                "name": "Function",
+                "printedName": "(RingSDK.OTAStatus.Type) -> RingSDK.OTAStatus",
+                "children": [
+                  {
+                    "kind": "TypeNominal",
+                    "name": "OTAStatus",
+                    "printedName": "RingSDK.OTAStatus",
+                    "usr": "s:7RingSDK9OTAStatusO"
+                  },
+                  {
+                    "kind": "TypeNominal",
+                    "name": "Metatype",
+                    "printedName": "RingSDK.OTAStatus.Type",
+                    "children": [
+                      {
+                        "kind": "TypeNominal",
+                        "name": "OTAStatus",
+                        "printedName": "RingSDK.OTAStatus",
+                        "usr": "s:7RingSDK9OTAStatusO"
+                      }
+                    ]
+                  }
+                ]
+              }
+            ],
+            "declKind": "EnumElement",
+            "usr": "s:7RingSDK9OTAStatusO4failyA2CmF",
+            "mangledName": "$s7RingSDK9OTAStatusO4failyA2CmF",
+            "moduleName": "RingSDK"
+          },
+          {
+            "kind": "Constructor",
+            "name": "init",
+            "printedName": "init(rawValue:)",
+            "children": [
+              {
+                "kind": "TypeNominal",
+                "name": "Optional",
+                "printedName": "RingSDK.OTAStatus?",
+                "children": [
+                  {
+                    "kind": "TypeNominal",
+                    "name": "OTAStatus",
+                    "printedName": "RingSDK.OTAStatus",
+                    "usr": "s:7RingSDK9OTAStatusO"
+                  }
+                ],
+                "usr": "s:Sq"
+              },
+              {
+                "kind": "TypeNominal",
+                "name": "Int",
+                "printedName": "Swift.Int",
+                "usr": "s:Si"
+              }
+            ],
+            "declKind": "Constructor",
+            "usr": "s:7RingSDK9OTAStatusO8rawValueACSgSi_tcfc",
+            "mangledName": "$s7RingSDK9OTAStatusO8rawValueACSgSi_tcfc",
+            "moduleName": "RingSDK",
+            "implicit": true,
+            "init_kind": "Designated"
+          },
+          {
+            "kind": "Var",
+            "name": "rawValue",
+            "printedName": "rawValue",
+            "children": [
+              {
+                "kind": "TypeNominal",
+                "name": "Int",
+                "printedName": "Swift.Int",
+                "usr": "s:Si"
+              }
+            ],
+            "declKind": "Var",
+            "usr": "s:7RingSDK9OTAStatusO8rawValueSivp",
+            "mangledName": "$s7RingSDK9OTAStatusO8rawValueSivp",
+            "moduleName": "RingSDK",
+            "implicit": true,
+            "accessors": [
+              {
+                "kind": "Accessor",
+                "name": "Get",
+                "printedName": "Get()",
+                "children": [
+                  {
+                    "kind": "TypeNominal",
+                    "name": "Int",
+                    "printedName": "Swift.Int",
+                    "usr": "s:Si"
+                  }
+                ],
+                "declKind": "Accessor",
+                "usr": "s:7RingSDK9OTAStatusO8rawValueSivg",
+                "mangledName": "$s7RingSDK9OTAStatusO8rawValueSivg",
+                "moduleName": "RingSDK",
+                "implicit": true,
+                "accessorKind": "get"
+              }
+            ]
+          }
+        ],
+        "declKind": "Enum",
+        "usr": "s:7RingSDK9OTAStatusO",
+        "mangledName": "$s7RingSDK9OTAStatusO",
+        "moduleName": "RingSDK",
+        "declAttributes": [
+          "AccessControl"
+        ],
+        "enumRawTypeName": "Int",
+        "conformances": [
+          {
+            "kind": "Conformance",
+            "name": "Copyable",
+            "printedName": "Copyable",
+            "usr": "s:s8CopyableP",
+            "mangledName": "$ss8CopyableP"
+          },
+          {
+            "kind": "Conformance",
+            "name": "Escapable",
+            "printedName": "Escapable",
+            "usr": "s:s9EscapableP",
+            "mangledName": "$ss9EscapableP"
+          },
+          {
+            "kind": "Conformance",
+            "name": "Equatable",
+            "printedName": "Equatable",
+            "usr": "s:SQ",
+            "mangledName": "$sSQ"
+          },
+          {
+            "kind": "Conformance",
+            "name": "Hashable",
+            "printedName": "Hashable",
+            "usr": "s:SH",
+            "mangledName": "$sSH"
+          },
+          {
+            "kind": "Conformance",
+            "name": "RawRepresentable",
+            "printedName": "RawRepresentable",
+            "children": [
+              {
+                "kind": "TypeWitness",
+                "name": "RawValue",
+                "printedName": "RawValue",
+                "children": [
+                  {
+                    "kind": "TypeNominal",
+                    "name": "Int",
+                    "printedName": "Swift.Int",
+                    "usr": "s:Si"
+                  }
+                ]
+              }
+            ],
+            "usr": "s:SY",
+            "mangledName": "$sSY"
+          }
+        ]
+      },
+      {
+        "kind": "TypeDecl",
+        "name": "ABOTAModel",
+        "printedName": "ABOTAModel",
+        "children": [
+          {
+            "kind": "Var",
+            "name": "shared",
+            "printedName": "shared",
+            "children": [
+              {
+                "kind": "TypeNominal",
+                "name": "ABOTAModel",
+                "printedName": "RingSDK.ABOTAModel",
+                "usr": "c:@M@RingSDK@objc(cs)ABOTAModel"
+              }
+            ],
+            "declKind": "Var",
+            "usr": "c:@M@RingSDK@objc(cs)ABOTAModel(cpy)shared",
+            "mangledName": "$s7RingSDK10ABOTAModelC6sharedACvpZ",
+            "moduleName": "RingSDK",
+            "static": true,
+            "declAttributes": [
+              "HasInitialValue",
+              "Final",
+              "HasStorage",
+              "AccessControl",
+              "ObjC"
+            ],
+            "isLet": true,
+            "hasStorage": true,
+            "accessors": [
+              {
+                "kind": "Accessor",
+                "name": "Get",
+                "printedName": "Get()",
+                "children": [
+                  {
+                    "kind": "TypeNominal",
+                    "name": "ABOTAModel",
+                    "printedName": "RingSDK.ABOTAModel",
+                    "usr": "c:@M@RingSDK@objc(cs)ABOTAModel"
+                  }
+                ],
+                "declKind": "Accessor",
+                "usr": "c:@M@RingSDK@objc(cs)ABOTAModel(cm)shared",
+                "mangledName": "$s7RingSDK10ABOTAModelC6sharedACvgZ",
+                "moduleName": "RingSDK",
+                "static": true,
+                "implicit": true,
+                "declAttributes": [
+                  "Final",
+                  "ObjC"
+                ],
+                "accessorKind": "get"
+              }
+            ]
+          },
+          {
+            "kind": "Var",
+            "name": "statusChangedCallback",
+            "printedName": "statusChangedCallback",
+            "children": [
+              {
+                "kind": "TypeNominal",
+                "name": "Optional",
+                "printedName": "((RingSDK.OTAStatus, Swift.Float) -> ())?",
+                "children": [
+                  {
+                    "kind": "TypeFunc",
+                    "name": "Function",
+                    "printedName": "(RingSDK.OTAStatus, Swift.Float) -> ()",
+                    "children": [
+                      {
+                        "kind": "TypeNominal",
+                        "name": "Void",
+                        "printedName": "()"
+                      },
+                      {
+                        "kind": "TypeNominal",
+                        "name": "Tuple",
+                        "printedName": "(RingSDK.OTAStatus, Swift.Float)",
+                        "children": [
+                          {
+                            "kind": "TypeNominal",
+                            "name": "OTAStatus",
+                            "printedName": "RingSDK.OTAStatus",
+                            "usr": "s:7RingSDK9OTAStatusO"
+                          },
+                          {
+                            "kind": "TypeNominal",
+                            "name": "Float",
+                            "printedName": "Swift.Float",
+                            "usr": "s:Sf"
+                          }
+                        ]
+                      }
+                    ]
+                  }
+                ],
+                "usr": "s:Sq"
+              }
+            ],
+            "declKind": "Var",
+            "usr": "s:7RingSDK10ABOTAModelC21statusChangedCallbackyAA9OTAStatusO_SftcSgvp",
+            "mangledName": "$s7RingSDK10ABOTAModelC21statusChangedCallbackyAA9OTAStatusO_SftcSgvp",
+            "moduleName": "RingSDK",
+            "declAttributes": [
+              "HasInitialValue",
+              "HasStorage",
+              "AccessControl"
+            ],
+            "hasStorage": true,
+            "accessors": [
+              {
+                "kind": "Accessor",
+                "name": "Get",
+                "printedName": "Get()",
+                "children": [
+                  {
+                    "kind": "TypeNominal",
+                    "name": "Optional",
+                    "printedName": "((RingSDK.OTAStatus, Swift.Float) -> ())?",
+                    "children": [
+                      {
+                        "kind": "TypeFunc",
+                        "name": "Function",
+                        "printedName": "(RingSDK.OTAStatus, Swift.Float) -> ()",
+                        "children": [
+                          {
+                            "kind": "TypeNominal",
+                            "name": "Void",
+                            "printedName": "()"
+                          },
+                          {
+                            "kind": "TypeNominal",
+                            "name": "Tuple",
+                            "printedName": "(RingSDK.OTAStatus, Swift.Float)",
+                            "children": [
+                              {
+                                "kind": "TypeNominal",
+                                "name": "OTAStatus",
+                                "printedName": "RingSDK.OTAStatus",
+                                "usr": "s:7RingSDK9OTAStatusO"
+                              },
+                              {
+                                "kind": "TypeNominal",
+                                "name": "Float",
+                                "printedName": "Swift.Float",
+                                "usr": "s:Sf"
+                              }
+                            ]
+                          }
+                        ]
+                      }
+                    ],
+                    "usr": "s:Sq"
+                  }
+                ],
+                "declKind": "Accessor",
+                "usr": "s:7RingSDK10ABOTAModelC21statusChangedCallbackyAA9OTAStatusO_SftcSgvg",
+                "mangledName": "$s7RingSDK10ABOTAModelC21statusChangedCallbackyAA9OTAStatusO_SftcSgvg",
+                "moduleName": "RingSDK",
+                "implicit": true,
+                "accessorKind": "get"
+              },
+              {
+                "kind": "Accessor",
+                "name": "Set",
+                "printedName": "Set()",
+                "children": [
+                  {
+                    "kind": "TypeNominal",
+                    "name": "Void",
+                    "printedName": "()"
+                  },
+                  {
+                    "kind": "TypeNominal",
+                    "name": "Optional",
+                    "printedName": "((RingSDK.OTAStatus, Swift.Float) -> ())?",
+                    "children": [
+                      {
+                        "kind": "TypeFunc",
+                        "name": "Function",
+                        "printedName": "(RingSDK.OTAStatus, Swift.Float) -> ()",
+                        "children": [
+                          {
+                            "kind": "TypeNominal",
+                            "name": "Void",
+                            "printedName": "()"
+                          },
+                          {
+                            "kind": "TypeNominal",
+                            "name": "Tuple",
+                            "printedName": "(RingSDK.OTAStatus, Swift.Float)",
+                            "children": [
+                              {
+                                "kind": "TypeNominal",
+                                "name": "OTAStatus",
+                                "printedName": "RingSDK.OTAStatus",
+                                "usr": "s:7RingSDK9OTAStatusO"
+                              },
+                              {
+                                "kind": "TypeNominal",
+                                "name": "Float",
+                                "printedName": "Swift.Float",
+                                "usr": "s:Sf"
+                              }
+                            ]
+                          }
+                        ]
+                      }
+                    ],
+                    "usr": "s:Sq"
+                  }
+                ],
+                "declKind": "Accessor",
+                "usr": "s:7RingSDK10ABOTAModelC21statusChangedCallbackyAA9OTAStatusO_SftcSgvs",
+                "mangledName": "$s7RingSDK10ABOTAModelC21statusChangedCallbackyAA9OTAStatusO_SftcSgvs",
+                "moduleName": "RingSDK",
+                "implicit": true,
+                "accessorKind": "set"
+              },
+              {
+                "kind": "Accessor",
+                "name": "Modify",
+                "printedName": "Modify()",
+                "children": [
+                  {
+                    "kind": "TypeNominal",
+                    "name": "Void",
+                    "printedName": "()"
+                  }
+                ],
+                "declKind": "Accessor",
+                "usr": "s:7RingSDK10ABOTAModelC21statusChangedCallbackyAA9OTAStatusO_SftcSgvM",
+                "mangledName": "$s7RingSDK10ABOTAModelC21statusChangedCallbackyAA9OTAStatusO_SftcSgvM",
+                "moduleName": "RingSDK",
+                "implicit": true,
+                "accessorKind": "_modify"
+              }
+            ]
+          },
+          {
+            "kind": "Function",
+            "name": "initOta",
+            "printedName": "initOta(path:)",
+            "children": [
+              {
+                "kind": "TypeNominal",
+                "name": "Void",
+                "printedName": "()"
+              },
+              {
+                "kind": "TypeNominal",
+                "name": "String",
+                "printedName": "Swift.String",
+                "usr": "s:SS"
+              }
+            ],
+            "declKind": "Func",
+            "usr": "c:@M@RingSDK@objc(cs)ABOTAModel(im)initOtaWithPath:",
+            "mangledName": "$s7RingSDK10ABOTAModelC7initOta4pathySS_tF",
+            "moduleName": "RingSDK",
+            "declAttributes": [
+              "AccessControl",
+              "ObjC"
+            ],
+            "funcSelfKind": "NonMutating"
+          },
+          {
+            "kind": "Function",
+            "name": "initOtaDelay",
+            "printedName": "initOtaDelay(path:)",
+            "children": [
+              {
+                "kind": "TypeNominal",
+                "name": "Void",
+                "printedName": "()"
+              },
+              {
+                "kind": "TypeNominal",
+                "name": "String",
+                "printedName": "Swift.String",
+                "usr": "s:SS"
+              }
+            ],
+            "declKind": "Func",
+            "usr": "c:@M@RingSDK@objc(cs)ABOTAModel(im)initOtaDelayWithPath:",
+            "mangledName": "$s7RingSDK10ABOTAModelC12initOtaDelay4pathySS_tF",
+            "moduleName": "RingSDK",
+            "declAttributes": [
+              "AccessControl",
+              "ObjC"
+            ],
+            "funcSelfKind": "NonMutating"
+          },
+          {
+            "kind": "Function",
+            "name": "initOtaClose",
+            "printedName": "initOtaClose()",
+            "children": [
+              {
+                "kind": "TypeNominal",
+                "name": "Void",
+                "printedName": "()"
+              }
+            ],
+            "declKind": "Func",
+            "usr": "c:@M@RingSDK@objc(cs)ABOTAModel(im)initOtaClose",
+            "mangledName": "$s7RingSDK10ABOTAModelC12initOtaCloseyyF",
+            "moduleName": "RingSDK",
+            "declAttributes": [
+              "AccessControl",
+              "ObjC"
+            ],
+            "funcSelfKind": "NonMutating"
+          },
+          {
+            "kind": "Function",
+            "name": "selectedFile",
+            "printedName": "selectedFile(_:)",
+            "children": [
+              {
+                "kind": "TypeNominal",
+                "name": "Void",
+                "printedName": "()"
+              },
+              {
+                "kind": "TypeNominal",
+                "name": "String",
+                "printedName": "Swift.String",
+                "usr": "s:SS"
+              }
+            ],
+            "declKind": "Func",
+            "usr": "c:@M@RingSDK@objc(cs)ABOTAModel(im)selectedFile:",
+            "mangledName": "$s7RingSDK10ABOTAModelC12selectedFileyySSF",
+            "moduleName": "RingSDK",
+            "declAttributes": [
+              "AccessControl",
+              "ObjC"
+            ],
+            "funcSelfKind": "NonMutating"
+          },
+          {
+            "kind": "Function",
+            "name": "onStatusChanged",
+            "printedName": "onStatusChanged(_:)",
+            "children": [
+              {
+                "kind": "TypeNominal",
+                "name": "Void",
+                "printedName": "()"
+              },
+              {
+                "kind": "TypeNominal",
+                "name": "OtaStatus",
+                "printedName": "AB_FOTA.OtaStatus",
+                "usr": "s:7AB_FOTA9OtaStatusO"
+              }
+            ],
+            "declKind": "Func",
+            "usr": "s:7RingSDK10ABOTAModelC15onStatusChangedyy7AB_FOTA03OtaE0OF",
+            "mangledName": "$s7RingSDK10ABOTAModelC15onStatusChangedyy7AB_FOTA03OtaE0OF",
+            "moduleName": "RingSDK",
+            "declAttributes": [
+              "AccessControl"
+            ],
+            "isFromExtension": true,
+            "funcSelfKind": "NonMutating"
+          },
+          {
+            "kind": "Function",
+            "name": "onReceiveVersion",
+            "printedName": "onReceiveVersion(_:)",
+            "children": [
+              {
+                "kind": "TypeNominal",
+                "name": "Void",
+                "printedName": "()"
+              },
+              {
+                "kind": "TypeNominal",
+                "name": "UInt16",
+                "printedName": "Swift.UInt16",
+                "usr": "s:s6UInt16V"
+              }
+            ],
+            "declKind": "Func",
+            "usr": "c:@CM@RingSDK@objc(cs)ABOTAModel(im)onReceiveVersion:",
+            "mangledName": "$s7RingSDK10ABOTAModelC16onReceiveVersionyys6UInt16VF",
+            "moduleName": "RingSDK",
+            "declAttributes": [
+              "Dynamic",
+              "AccessControl",
+              "ObjC"
+            ],
+            "isFromExtension": true,
+            "funcSelfKind": "NonMutating"
+          },
+          {
+            "kind": "Function",
+            "name": "onReceiveTWSInfo",
+            "printedName": "onReceiveTWSInfo(isTWS:isTWSConnected:)",
+            "children": [
+              {
+                "kind": "TypeNominal",
+                "name": "Void",
+                "printedName": "()"
+              },
+              {
+                "kind": "TypeNominal",
+                "name": "Bool",
+                "printedName": "Swift.Bool",
+                "usr": "s:Sb"
+              },
+              {
+                "kind": "TypeNominal",
+                "name": "Bool",
+                "printedName": "Swift.Bool",
+                "usr": "s:Sb"
+              }
+            ],
+            "declKind": "Func",
+            "usr": "c:@CM@RingSDK@objc(cs)ABOTAModel(im)onReceiveTWSInfoWithIsTWS:isTWSConnected:",
+            "mangledName": "$s7RingSDK10ABOTAModelC16onReceiveTWSInfo5isTWS0G12TWSConnectedySb_SbtF",
+            "moduleName": "RingSDK",
+            "declAttributes": [
+              "Dynamic",
+              "AccessControl",
+              "ObjC"
+            ],
+            "isFromExtension": true,
+            "funcSelfKind": "NonMutating"
+          },
+          {
+            "kind": "Function",
+            "name": "onReceiveChannel",
+            "printedName": "onReceiveChannel(_:)",
+            "children": [
+              {
+                "kind": "TypeNominal",
+                "name": "Void",
+                "printedName": "()"
+              },
+              {
+                "kind": "TypeNominal",
+                "name": "Bool",
+                "printedName": "Swift.Bool",
+                "usr": "s:Sb"
+              }
+            ],
+            "declKind": "Func",
+            "usr": "c:@CM@RingSDK@objc(cs)ABOTAModel(im)onReceiveChannel:",
+            "mangledName": "$s7RingSDK10ABOTAModelC16onReceiveChannelyySbF",
+            "moduleName": "RingSDK",
+            "declAttributes": [
+              "Dynamic",
+              "AccessControl",
+              "ObjC"
+            ],
+            "isFromExtension": true,
+            "funcSelfKind": "NonMutating"
+          }
+        ],
+        "declKind": "Class",
+        "usr": "c:@M@RingSDK@objc(cs)ABOTAModel",
+        "mangledName": "$s7RingSDK10ABOTAModelC",
+        "moduleName": "RingSDK",
+        "declAttributes": [
+          "AccessControl",
+          "ObjCMembers",
+          "ObjC"
+        ],
+        "superclassUsr": "c:objc(cs)NSObject",
+        "hasMissingDesignatedInitializers": true,
+        "inheritsConvenienceInitializers": true,
+        "superclassNames": [
+          "ObjectiveC.NSObject"
+        ],
+        "conformances": [
+          {
+            "kind": "Conformance",
+            "name": "Copyable",
+            "printedName": "Copyable",
+            "usr": "s:s8CopyableP",
+            "mangledName": "$ss8CopyableP"
+          },
+          {
+            "kind": "Conformance",
+            "name": "Escapable",
+            "printedName": "Escapable",
+            "usr": "s:s9EscapableP",
+            "mangledName": "$ss9EscapableP"
+          },
+          {
+            "kind": "Conformance",
+            "name": "Equatable",
+            "printedName": "Equatable",
+            "usr": "s:SQ",
+            "mangledName": "$sSQ"
+          },
+          {
+            "kind": "Conformance",
+            "name": "Hashable",
+            "printedName": "Hashable",
+            "usr": "s:SH",
+            "mangledName": "$sSH"
+          },
+          {
+            "kind": "Conformance",
+            "name": "CVarArg",
+            "printedName": "CVarArg",
+            "usr": "s:s7CVarArgP",
+            "mangledName": "$ss7CVarArgP"
+          },
+          {
+            "kind": "Conformance",
+            "name": "_KeyValueCodingAndObservingPublishing",
+            "printedName": "_KeyValueCodingAndObservingPublishing",
+            "usr": "s:10Foundation37_KeyValueCodingAndObservingPublishingP",
+            "mangledName": "$s10Foundation37_KeyValueCodingAndObservingPublishingP"
+          },
+          {
+            "kind": "Conformance",
+            "name": "_KeyValueCodingAndObserving",
+            "printedName": "_KeyValueCodingAndObserving",
+            "usr": "s:10Foundation27_KeyValueCodingAndObservingP",
+            "mangledName": "$s10Foundation27_KeyValueCodingAndObservingP"
+          },
+          {
+            "kind": "Conformance",
+            "name": "CustomStringConvertible",
+            "printedName": "CustomStringConvertible",
+            "usr": "s:s23CustomStringConvertibleP",
+            "mangledName": "$ss23CustomStringConvertibleP"
+          },
+          {
+            "kind": "Conformance",
+            "name": "CustomDebugStringConvertible",
+            "printedName": "CustomDebugStringConvertible",
+            "usr": "s:s28CustomDebugStringConvertibleP",
+            "mangledName": "$ss28CustomDebugStringConvertibleP"
+          },
+          {
+            "kind": "Conformance",
+            "name": "ABOtaEventListener",
+            "printedName": "ABOtaEventListener",
+            "usr": "s:7AB_FOTA18ABOtaEventListenerP",
+            "mangledName": "$s7AB_FOTA18ABOtaEventListenerP"
+          }
+        ]
+      },
+      {
+        "kind": "Import",
+        "name": "Foundation",
+        "printedName": "Foundation",
+        "declKind": "Import",
+        "moduleName": "RingSDK",
+        "declAttributes": [
+          "RawDocComment"
+        ]
+      },
+      {
+        "kind": "Import",
+        "name": "CoreBluetooth",
+        "printedName": "CoreBluetooth",
+        "declKind": "Import",
+        "moduleName": "RingSDK"
+      },
+      {
+        "kind": "Import",
+        "name": "Foundation",
+        "printedName": "Foundation",
+        "declKind": "Import",
+        "moduleName": "RingSDK",
+        "declAttributes": [
+          "RawDocComment"
+        ]
+      },
+      {
+        "kind": "Import",
+        "name": "CoreBluetooth",
+        "printedName": "CoreBluetooth",
+        "declKind": "Import",
+        "moduleName": "RingSDK"
+      },
+      {
+        "kind": "Import",
+        "name": "AB_FOTA",
+        "printedName": "AB_FOTA",
+        "declKind": "Import",
+        "moduleName": "RingSDK"
+      },
+      {
+        "kind": "Import",
+        "name": "UIKit",
+        "printedName": "UIKit",
+        "declKind": "Import",
+        "moduleName": "RingSDK",
+        "declAttributes": [
+          "RawDocComment"
+        ]
+      },
+      {
+        "kind": "Import",
+        "name": "Foundation",
+        "printedName": "Foundation",
+        "declKind": "Import",
+        "moduleName": "RingSDK",
+        "declAttributes": [
+          "RawDocComment"
+        ]
+      },
+      {
+        "kind": "Import",
+        "name": "Foundation",
+        "printedName": "Foundation",
+        "declKind": "Import",
+        "moduleName": "RingSDK",
+        "declAttributes": [
+          "RawDocComment"
+        ]
+      },
+      {
+        "kind": "Import",
+        "name": "MobileCoreServices",
+        "printedName": "MobileCoreServices",
+        "declKind": "Import",
+        "moduleName": "RingSDK"
+      },
+      {
+        "kind": "Import",
+        "name": "Foundation",
+        "printedName": "Foundation",
+        "declKind": "Import",
+        "moduleName": "RingSDK",
+        "declAttributes": [
+          "RawDocComment"
+        ]
+      }
+    ],
+    "json_format_version": 8
+  },
+  "ConstValues": [
+    {
+      "filePath": "\/Users\/huangjianhua\/Desktop\/RingSDK\/RingSDK\/3rdParty\/AB_OTA\/ABOTAModel.swift",
+      "kind": "IntegerLiteral",
+      "offset": 205,
+      "length": 5,
+      "value": "1"
+    },
+    {
+      "filePath": "\/Users\/huangjianhua\/Desktop\/RingSDK\/RingSDK\/3rdParty\/AB_OTA\/ABOTAModel.swift",
+      "kind": "IntegerLiteral",
+      "offset": 220,
+      "length": 8,
+      "value": "2"
+    },
+    {
+      "filePath": "\/Users\/huangjianhua\/Desktop\/RingSDK\/RingSDK\/3rdParty\/AB_OTA\/ABOTAModel.swift",
+      "kind": "IntegerLiteral",
+      "offset": 238,
+      "length": 5,
+      "value": "3"
+    },
+    {
+      "filePath": "\/Users\/huangjianhua\/Desktop\/RingSDK\/RingSDK\/3rdParty\/AB_OTA\/ABOTAModel.swift",
+      "kind": "IntegerLiteral",
+      "offset": 253,
+      "length": 10,
+      "value": "4"
+    },
+    {
+      "filePath": "\/Users\/huangjianhua\/Desktop\/RingSDK\/RingSDK\/3rdParty\/AB_OTA\/ABOTAModel.swift",
+      "kind": "IntegerLiteral",
+      "offset": 273,
+      "length": 7,
+      "value": "5"
+    },
+    {
+      "filePath": "\/Users\/huangjianhua\/Desktop\/RingSDK\/RingSDK\/3rdParty\/AB_OTA\/ABOTAModel.swift",
+      "kind": "IntegerLiteral",
+      "offset": 290,
+      "length": 10,
+      "value": "6"
+    },
+    {
+      "filePath": "\/Users\/huangjianhua\/Desktop\/RingSDK\/RingSDK\/3rdParty\/AB_OTA\/ABOTAModel.swift",
+      "kind": "IntegerLiteral",
+      "offset": 310,
+      "length": 4,
+      "value": "7"
+    },
+    {
+      "filePath": "\/Users\/huangjianhua\/Desktop\/RingSDK\/RingSDK\/3rdParty\/AB_OTA\/BLE\/OtaService.swift",
+      "kind": "StringLiteral",
+      "offset": 196,
+      "length": 6,
+      "value": "\"FF12\""
+    },
+    {
+      "filePath": "\/Users\/huangjianhua\/Desktop\/RingSDK\/RingSDK\/3rdParty\/AB_OTA\/BLE\/OtaService.swift",
+      "kind": "StringLiteral",
+      "offset": 255,
+      "length": 6,
+      "value": "\"FF14\""
+    },
+    {
+      "filePath": "\/Users\/huangjianhua\/Desktop\/RingSDK\/RingSDK\/3rdParty\/AB_OTA\/BLE\/OtaService.swift",
+      "kind": "StringLiteral",
+      "offset": 314,
+      "length": 6,
+      "value": "\"FF15\""
+    },
+    {
+      "filePath": "\/Users\/huangjianhua\/Desktop\/RingSDK\/RingSDK\/3rdParty\/AB_OTA\/BLE\/BleManager.swift",
+      "kind": "BooleanLiteral",
+      "offset": 546,
+      "length": 5,
+      "value": "false"
+    },
+    {
+      "filePath": "\/Users\/huangjianhua\/Desktop\/RingSDK\/RingSDK\/3rdParty\/AB_OTA\/BLE\/BleManager.swift",
+      "kind": "BooleanLiteral",
+      "offset": 588,
+      "length": 5,
+      "value": "false"
+    },
+    {
+      "filePath": "\/Users\/huangjianhua\/Desktop\/RingSDK\/RingSDK\/3rdParty\/AB_OTA\/Utils\/Extension.swift",
+      "kind": "BooleanLiteral",
+      "offset": 1252,
+      "length": 5,
+      "value": "false"
+    },
+    {
+      "filePath": "\/Users\/huangjianhua\/Desktop\/RingSDK\/RingSDK\/3rdParty\/AB_OTA\/Time\/TimeRecord.swift",
+      "kind": "StringLiteral",
+      "offset": 239,
+      "length": 14,
+      "value": "\"HH:mm:ss.SSS\""
+    },
+    {
+      "filePath": "\/Users\/huangjianhua\/Desktop\/RingSDK\/RingSDK\/3rdParty\/AB_OTA\/Time\/TimeRecord.swift",
+      "kind": "IntegerLiteral",
+      "offset": 470,
+      "length": 1,
+      "value": "0"
+    },
+    {
+      "filePath": "\/Users\/huangjianhua\/Desktop\/RingSDK\/RingSDK\/3rdParty\/AB_OTA\/Utils\/Utils.swift",
+      "kind": "StringLiteral",
+      "offset": 223,
+      "length": 5,
+      "value": "\"fot\""
+    }
+  ]
+}

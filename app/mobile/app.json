@@ -1,0 +1,51 @@
+{
+  "expo": {
+    "name": "spur",
+    "slug": "recording-ring",
+    "version": "1.0.0",
+    "orientation": "portrait",
+    "icon": "./assets/icon.png",
+    "scheme": "recordingring",
+    "userInterfaceStyle": "light",
+    "assetBundlePatterns": [
+      "**/*"
+    ],
+    "ios": {
+      "supportsTablet": false,
+      "bundleIdentifier": "com.spur.recordingring",
+      "buildNumber": "1",
+      "infoPlist": {
+        "NSBluetoothAlwaysUsageDescription": "Spur uses Bluetooth to connect to your recording ring, sync recordings, and read battery and device status.",
+        "NSBluetoothPeripheralUsageDescription": "Spur uses Bluetooth to connect to your recording ring, sync recordings, and read battery and device status.",
+        "NSMicrophoneUsageDescription": "Spur uses the microphone for on-device recording and audio capture when you choose to record on this iPhone.",
+        "NSLocalNetworkUsageDescription": "Spur connects to Spur Buddy on your Mac on the local network to send computer tasks.",
+        "NSAppTransportSecurity": {
+          "NSAllowsLocalNetworking": true
+        }
+      }
+    },
+    "android": {
+      "package": "com.spur.recordingring",
+      "versionCode": 1,
+      "permissions": [
+        "android.permission.BLUETOOTH_SCAN",
+        "android.permission.BLUETOOTH_CONNECT",
+        "android.permission.ACCESS_FINE_LOCATION",
+        "android.permission.RECORD_AUDIO",
+        "android.permission.FOREGROUND_SERVICE"
+      ]
+    },
+    "plugins": [
+      [
+        "react-native-ble-plx",
+        {
+          "isBackgroundEnabled": false,
+          "modes": [
+            "central"
+          ],
+          "bluetoothAlwaysPermission": "Spur uses Bluetooth to connect to your recording ring, sync recordings, and read battery and device status."
+        }
+      ]
+    ]
+  }
+}

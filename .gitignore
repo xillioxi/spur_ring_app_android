@@ -1,0 +1,53 @@
+# OS / editor
+.DS_Store
+.idea/
+.vscode/
+*.log
+*.tar.gz
+*.pdf
+
+# Agent local artifacts
+agent/runtime/*.zip
+agent/runtime/.deepseek-harness.git.bak/
+
+
+# Dependencies
+**/node_modules/
+**/__pycache__/
+**/.venv/
+**/.expo/
+
+# Android build (keep source + libs)
+**/android/app/build/
+**/android/build/
+**/android/.gradle/
+**/android/local.properties
+
+# iOS build (keep project + Podfile; Pods regenerated)
+**/ios/build/
+**/ios/Pods/
+**/ios/DerivedData/
+
+# Hardware local build
+**/build-arm/
+
+# App artifacts / archives / runtime data
+*.apk
+*.aab
+app/archive/
+app/cloud/**/uploads/
+app/cloud/**/transcripts/
+app/cloud/**/reports/
+app/cloud/**/outputs/
+app/cloud/**/tmp/
+app/cloud/*.tar.gz
+**/.env
+**/.env.local
+!**/.env.example
+agent/runtime/spur-profile/cordis.patch.resolved.yml
+
+# desktop / hardware: keep empty placeholders only (local content stays on disk)
+/desktop/**
+!/desktop/.gitkeep
+/hardware/**
+!/hardware/.gitkeep

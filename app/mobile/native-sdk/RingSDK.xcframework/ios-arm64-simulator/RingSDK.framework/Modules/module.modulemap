@@ -1,0 +1,5 @@
+framework module RingSDK {
+  umbrella header "RingSDK.h"
+  export *
+  module * { export * }
+}

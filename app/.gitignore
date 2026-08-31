@@ -1,0 +1,13 @@
+# Kept for local tools; root .gitignore is authoritative for the Spur_ring repo.
+.DS_Store
+*.log
+*.tar.gz
+**/node_modules/
+**/.expo/
+**/android/app/build/
+**/android/build/
+**/android/.gradle/
+**/android/local.properties
+**/ios/build/
+**/ios/Pods/
+**/build-arm/

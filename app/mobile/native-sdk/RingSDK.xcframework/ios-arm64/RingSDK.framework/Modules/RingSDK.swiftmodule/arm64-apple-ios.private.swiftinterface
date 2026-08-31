@@ -1,0 +1,64 @@
+// swift-interface-format-version: 1.0
+// swift-compiler-version: Apple Swift version 6.2.4 effective-5.10 (swiftlang-6.2.4.1.4 clang-1700.6.4.2)
+// swift-module-flags: -target arm64-apple-ios13.0 -enable-objc-interop -enable-library-evolution -swift-version 5 -enforce-exclusivity=checked -O -enable-experimental-feature DebugDescriptionMacro -enable-bare-slash-regex -module-name RingSDK
+// swift-module-flags-ignorable: -no-verify-emitted-module-interface -formal-cxx-interoperability-mode=off -interface-compiler-version 6.2.4
+import AB_FOTA
+import CoreBluetooth
+import Foundation
+import MobileCoreServices
+@_exported import RingSDK
+import Swift
+import UIKit
+import _Concurrency
+import _StringProcessing
+import _SwiftConcurrencyShims
+@objc @_inheritsConvenienceInitializers @objcMembers @_Concurrency.MainActor @preconcurrency public class DocumentPickerHelper : ObjectiveC.NSObject, UIKit.UIDocumentPickerDelegate {
+  @objc @_Concurrency.MainActor @preconcurrency public static let shared: RingSDK.DocumentPickerHelper
+  #if compiler(>=5.3) && $NonescapableTypes
+  @objc @_Concurrency.MainActor @preconcurrency public func pickDocument(from viewController: UIKit.UIViewController, completion: @escaping (Swift.String?) -> Swift.Void)
+  #endif
+  @_Concurrency.MainActor @preconcurrency @objc public func documentPicker(_ controller: UIKit.UIDocumentPickerViewController, didPickDocumentsAt urls: [Foundation.URL])
+  @_Concurrency.MainActor @preconcurrency @objc public func documentPickerWasCancelled(_ controller: UIKit.UIDocumentPickerViewController)
+  #if compiler(>=5.3) && $NonescapableTypes
+  @_Concurrency.MainActor @preconcurrency public func downloadFirmware(from urlString: Swift.String, completion: @escaping (Swift.Result<Foundation.URL, any Swift.Error>) -> Swift.Void)
+  #endif
+  @_Concurrency.MainActor @preconcurrency @objc override dynamic public init()
+  @objc deinit
+}
+public enum OTAStatus : Swift.Int {
+  case ready
+  case start
+  case updating
+  case pause
+  case `continue`
+  case success
+  case waitFinish
+  case fail
+  #if compiler(>=5.3) && $NonescapableTypes
+  public init?(rawValue: Swift.Int)
+  #endif
+  public typealias RawValue = Swift.Int
+  public var rawValue: Swift.Int {
+    get
+  }
+}
+@objc @_inheritsConvenienceInitializers @_hasMissingDesignatedInitializers @objcMembers public class ABOTAModel : ObjectiveC.NSObject {
+  @objc public static let shared: RingSDK.ABOTAModel
+  public typealias StatusChangedCallbackClosure = (RingSDK.OTAStatus, Swift.Float) -> Swift.Void
+  public var statusChangedCallback: RingSDK.ABOTAModel.StatusChangedCallbackClosure?
+  @objc public func initOta(path: Swift.String)
+  @objc public func initOtaDelay(path: Swift.String)
+  @objc public func initOtaClose()
+  @objc public func selectedFile(_ filePath: Swift.String)
+  @objc deinit
+}
+extension RingSDK.ABOTAModel : AB_FOTA.ABOtaEventListener {
+  public func onStatusChanged(_ status: AB_FOTA.OtaStatus)
+  @objc dynamic public func onReceiveVersion(_ version: Swift.UInt16)
+  @objc dynamic public func onReceiveTWSInfo(isTWS: Swift.Bool, isTWSConnected: Swift.Bool)
+  @objc dynamic public func onReceiveChannel(_ isLeftChannel: Swift.Bool)
+}
+extension RingSDK.DocumentPickerHelper : Swift.Sendable {}
+extension RingSDK.OTAStatus : Swift.Equatable {}
+extension RingSDK.OTAStatus : Swift.Hashable {}
+extension RingSDK.OTAStatus : Swift.RawRepresentable {}
