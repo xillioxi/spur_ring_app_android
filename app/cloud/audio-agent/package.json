@@ -4,10 +4,12 @@
   "private": true,
   "type": "module",
   "scripts": {
-    "dev": "$HOME/.bun/bin/bun run src/server.ts",
-    "test:asr-url": "$HOME/.bun/bin/bun run scripts/test-volcengine-asr-url.ts",
-    "test:stt-file": "$HOME/.bun/bin/bun run scripts/test-stt-file.ts",
-    "test:email": "$HOME/.bun/bin/bun run scripts/test-email.ts"
+    "build": "bun build src/server.ts --target=bun --outdir=dist",
+    "dev": "bun run src/server.ts",
+    "start": "bun run dist/server.js",
+    "test:asr-url": "bun run scripts/test-volcengine-asr-url.ts",
+    "test:stt-file": "bun run scripts/test-stt-file.ts",
+    "test:email": "bun run scripts/test-email.ts"
   },
   "dependencies": {
     "ws": "^8.21.3"

@@ -21,6 +21,7 @@ agent/runtime/.deepseek-harness.git.bak/
 **/android/app/build/
 **/android/build/
 **/android/.gradle/
+**/android/.cxx/
 **/android/local.properties
 
 # iOS build (keep project + Podfile; Pods regenerated)
@@ -51,3 +52,7 @@ agent/runtime/spur-profile/cordis.patch.resolved.yml
 !/desktop/.gitkeep
 /hardware/**
 !/hardware/.gitkeep
+
+# Local cloud build output
+app/cloud/**/dist/
+

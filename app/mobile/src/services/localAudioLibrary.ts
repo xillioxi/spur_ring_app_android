@@ -1,5 +1,5 @@
 import { Audio } from 'expo-av';
-import * as FileSystem from 'expo-file-system';
+import * as FileSystem from 'expo-file-system/legacy';
 
 import { compareDemoFirst } from '@/services/demoContent';
 
@@ -107,7 +107,7 @@ async function readDeletedAudioNames(): Promise<Set<string>> {
 async function loadFile(name: string): Promise<LocalAudioFile> {
   // Keep a raw file:// path for AVPlayback — encoding the filename breaks expo-av on iOS.
   const uri = `${RECORDING_DIR}${name}`;
-  const info = await FileSystem.getInfoAsync(uri, { size: true });
+  const info = await FileSystem.getInfoAsync(uri);
   const durationMs = await readDuration(uri);
   return {
     id: uri,

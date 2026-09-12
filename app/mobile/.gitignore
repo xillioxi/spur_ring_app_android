@@ -10,7 +10,11 @@ coverage/
 android/app/build/
 android/build/
 android/.gradle/
+android/.cxx/
 android/local.properties
+android/keystore.properties
+android/app/*.jks
+android/app/*.keystore
 
 # iOS — ignore generated deps/build only (keep xcodeproj, Podfile, native src)
 ios/build/

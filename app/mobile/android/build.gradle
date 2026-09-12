@@ -1,42 +1,39 @@
 // Top-level build file where you can add configuration options common to all sub-projects/modules.
-def nodeExecutable = "/opt/homebrew/opt/node@20/bin/node"
 
 buildscript {
-    ext {
-        buildToolsVersion = findProperty('android.buildToolsVersion') ?: '35.0.0'
-        minSdkVersion = Integer.parseInt(findProperty('android.minSdkVersion') ?: '24')
-        compileSdkVersion = Integer.parseInt(findProperty('android.compileSdkVersion') ?: '35')
-        targetSdkVersion = Integer.parseInt(findProperty('android.targetSdkVersion') ?: '34')
-        kotlinVersion = findProperty('android.kotlinVersion') ?: '1.9.25'
-
-        ndkVersion = "26.1.10909125"
-    }
-    repositories {
-        google()
-        mavenCentral()
-    }
-    dependencies {
-        classpath('com.android.tools.build:gradle')
-        classpath('com.facebook.react:react-native-gradle-plugin')
-        classpath("org.jetbrains.kotlin:kotlin-gradle-plugin:${kotlinVersion}")
-    }
+  repositories {
+    google()
+    mavenCentral()
+  }
+  dependencies {
+    classpath('com.android.tools.build:gradle')
+    classpath('com.facebook.react:react-native-gradle-plugin')
+    classpath('org.jetbrains.kotlin:kotlin-gradle-plugin')
+  }
 }
 
+allprojects {
+  repositories {
+    google()
+    mavenCentral()
+    maven { url 'https://www.jitpack.io' }
+  }
+}
+
+apply plugin: "expo-root-project"
 apply plugin: "com.facebook.react.rootproject"
 
-allprojects {
-    repositories {
-        maven {
-            // All of React Native (JS, Obj-C sources, Android binaries) is installed from npm
-            url(new File([nodeExecutable, '--print', "require.resolve('react-native/package.json')"].execute(null, rootDir).text.trim(), '../android'))
-        }
-        maven {
-            // Android JSC is installed from npm
-            url(new File([nodeExecutable, '--print', "require.resolve('jsc-android/package.json', { paths: [require.resolve('react-native/package.json')] })"].execute(null, rootDir).text.trim(), '../dist'))
-        }
-
-        google()
-        mavenCentral()
-        maven { url 'https://www.jitpack.io' }
+// Keep generated native paths short enough for the Windows CMake/Ninja toolchain.
+if (System.getProperty('os.name').toLowerCase().contains('windows')) {
+  def configuredCxxRoot = System.getenv('ANDROID_CXX_STAGING_ROOT')
+  def cxxRoot = configuredCxxRoot
+    ? new File(configuredCxxRoot)
+    : rootProject.file("../../../../.android-cxx")
+  subprojects { libraryProject ->
+    libraryProject.plugins.withId('com.android.library') {
+      def shortName = libraryProject.name.replace('react-native-', 'rn-')
+      libraryProject.android.externalNativeBuild.cmake.buildStagingDirectory =
+        new File(cxxRoot, shortName)
     }
+  }
 }

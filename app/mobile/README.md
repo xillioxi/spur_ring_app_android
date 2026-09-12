@@ -21,6 +21,35 @@ npm install
 npm run android
 ```
 
+## Windows / Android Studio
+
+1. Install Node.js 20 and Android Studio with Android SDK 35.
+2. Run `npm ci` in this `mobile` directory.
+3. Open the `mobile/android` directory in Android Studio (not the repository root).
+4. Let Gradle sync finish, select a connected Android device, and run the `app` configuration.
+
+The Gradle project resolves Node from `NODE_BINARY` when that environment
+variable is set, otherwise it uses `node` from `PATH`. This keeps the same
+Android project usable on Windows, macOS, Linux, and CI.
+
+Windows builds stage native library files under `android/.cxx` to avoid excessively
+long paths beneath `node_modules`. CMake/Ninja can otherwise report
+`build.ninja still dirty after 100 tries` for generated React Native prefab files.
+For especially long checkout paths, also use a short drive mapping. Choose an
+unused drive letter, for example:
+
+```powershell
+subst S: "C:\path\to\Spur Ring App"
+cd S:\Spur_ring-main\app\mobile\android
+.\gradlew.bat :app:assembleRelease :app:bundleRelease
+# After Gradle exits, return to another drive before removing the mapping:
+cd C:\
+subst S: /D
+```
+
+Run `npm run typecheck` and `npm test` in `app/mobile` to validate the TypeScript
+source and document generation success, failure, and cancel/retry behavior.
+
 iOS 后续可用：
 
 ```bash

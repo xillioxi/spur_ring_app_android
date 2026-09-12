@@ -1,4 +1,4 @@
-import * as FileSystem from 'expo-file-system';
+import * as FileSystem from 'expo-file-system/legacy';
 
 import { processAudioWithAi } from '@/services/audioAgentApi';
 import type { LocalAudioFile } from '@/services/localAudioLibrary';

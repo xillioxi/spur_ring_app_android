@@ -1,4 +1,5 @@
 import { join } from 'path'
+import { fileURLToPath } from 'url'
 
 export type AudioAgentConfig = {
   port: number
@@ -50,7 +51,7 @@ export type AudioAgentConfig = {
   }
 }
 
-const appRoot = new URL('..', import.meta.url).pathname
+const appRoot = fileURLToPath(new URL('..', import.meta.url))
 
 export function getConfig(): AudioAgentConfig {
   const parentRoot =

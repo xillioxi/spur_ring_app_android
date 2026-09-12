@@ -128,7 +128,8 @@ async function runOfficeJob(
       updatedAt: Date.now()
     });
   } finally {
-    jobs.delete(cardId);
+    // A cancelled request may finish after the user has already started a retry.
+    if (jobs.get(cardId) === job) jobs.delete(cardId);
   }
 }
 

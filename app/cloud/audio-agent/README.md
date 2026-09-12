@@ -20,7 +20,7 @@ stay unchanged.
 ## Run
 
 ```bash
-cd /Users/spur/X/space/claudeV2/apps/audio-agent
+bun install
 bun run dev
 ```
 
@@ -40,3 +40,13 @@ export AUDIO_AGENT_AGENT_COMMAND="bun run scripts/dev.ts -p"
 ```
 
 `mock` STT is the default for the first development pass.
+
+## Production build
+
+```bash
+bun run build
+bun run start
+```
+
+The compiled server is written to `dist/server.js`. The default health check is
+available at `http://localhost:8787/health`.

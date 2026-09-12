@@ -9,7 +9,7 @@ import {
   View
 } from 'react-native';
 import { Audio, InterruptionModeAndroid, InterruptionModeIOS } from 'expo-av';
-import * as FileSystem from 'expo-file-system';
+import * as FileSystem from 'expo-file-system/legacy';
 import { Check, Mic, X } from 'lucide-react-native';
 import { Gesture, GestureDetector } from 'react-native-gesture-handler';
 import Animated, {

@@ -1,15 +1,15 @@
 const fs = require('fs');
 const path = require('path');
 
-const candidates = [
-  '/opt/homebrew/opt/node@20/bin/node',
-  '/opt/homebrew/bin/node',
-  '/usr/local/bin/node'
-];
-const nodeBinary = candidates.find(fs.existsSync);
+// npm already knows the exact Node executable that is running this script.
+// NODE_BINARY can override it for IDE/CI environments. Forward slashes keep
+// the generated Groovy strings valid on Windows as well as macOS/Linux.
+const configuredNodeBinary =
+  process.env.NODE_BINARY || process.env.npm_node_execpath || process.execPath;
+const nodeBinary = configuredNodeBinary.replace(/\\/g, '/');
 
-if (!nodeBinary) {
-  throw new Error(`Android Gradle requires an absolute Node path. Checked: ${candidates.join(', ')}`);
+if (!fs.existsSync(configuredNodeBinary)) {
+  throw new Error(`Android Gradle Node binary does not exist: ${configuredNodeBinary}`);
 }
 
 const gradleFiles = [
@@ -23,6 +23,8 @@ for (const relativeFile of gradleFiles) {
 
   const original = fs.readFileSync(file, 'utf8');
   const patched = original
+    .replace(/commandLine\("[^"]*node(?:\.exe)?",/g, `commandLine("${nodeBinary}",`)
+    .replace(/commandLine\('[^']*node(?:\.exe)?',/g, `commandLine('${nodeBinary}',`)
     .replaceAll('commandLine("node",', `commandLine("${nodeBinary}",`)
     .replaceAll("commandLine('node',", `commandLine('${nodeBinary}',`)
     .replaceAll('commandLine("/opt/homebrew/bin/node",', `commandLine("${nodeBinary}",`)

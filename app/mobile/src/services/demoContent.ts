@@ -1,5 +1,5 @@
 import { Asset } from 'expo-asset';
-import * as FileSystem from 'expo-file-system';
+import * as FileSystem from 'expo-file-system/legacy';
 
 import type { LocalAgentCard } from '@/services/localAgentCards';
 import type { LocalRecordingAnalysis } from '@/services/localRecordingAnalysis';
@@ -363,7 +363,7 @@ export async function ensureDemoContent(): Promise<void> {
   const analyses = await readJsonRecord<LocalRecordingAnalysis>(ANALYSIS_PATH);
   for (const seed of recordingSeeds) {
     const uri = demoFileUri(seed.fileName);
-    const info = await FileSystem.getInfoAsync(diskPathForName(seed.fileName), { size: true });
+    const info = await FileSystem.getInfoAsync(diskPathForName(seed.fileName));
     if (!info.exists) continue;
     analyses[uri] = {
       id: uri,
@@ -384,7 +384,7 @@ export async function ensureDemoContent(): Promise<void> {
   const cards = await readJsonRecord<LocalAgentCard>(AGENT_CARDS_PATH);
   for (const seed of agentSeeds) {
     const uri = demoFileUri(seed.fileName);
-    const info = await FileSystem.getInfoAsync(diskPathForName(seed.fileName), { size: true });
+    const info = await FileSystem.getInfoAsync(diskPathForName(seed.fileName));
     if (!info.exists) continue;
     cards[uri] = {
       id: uri,
@@ -427,7 +427,7 @@ async function copyDemoAsset(
   force: boolean
 ): Promise<void> {
   const destination = diskPathForName(fileName);
-  const existing = await FileSystem.getInfoAsync(destination, { size: true });
+  const existing = await FileSystem.getInfoAsync(destination);
   const size = existing.exists && 'size' in existing ? Number(existing.size || 0) : 0;
   // User-deleted demos must stay gone unless a seed-version bump forces reseed.
   if (!force && !existing.exists) return;
@@ -443,7 +443,7 @@ async function copyDemoAsset(
   if (!source) throw new Error(`Demo asset missing: ${fileName}`);
   await FileSystem.copyAsync({ from: source, to: destination });
 
-  const copied = await FileSystem.getInfoAsync(destination, { size: true });
+  const copied = await FileSystem.getInfoAsync(destination);
   const copiedSize = copied.exists && 'size' in copied ? Number(copied.size || 0) : 0;
   if (copiedSize < minBytes) {
     throw new Error(`Demo asset copy too small: ${fileName} size=${copiedSize}`);

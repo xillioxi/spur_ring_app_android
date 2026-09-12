@@ -3,7 +3,13 @@ apply plugin: "org.jetbrains.kotlin.android"
 apply plugin: "com.facebook.react"
 
 def projectRoot = rootDir.getAbsoluteFile().getParentFile().getAbsolutePath()
-def nodeExecutable = "/opt/homebrew/opt/node@20/bin/node"
+// Resolve Node portably. NODE_BINARY may be an absolute path when the IDE PATH differs.
+def nodeExecutable = System.getenv('NODE_BINARY') ?: 'node'
+def keystorePropertiesFile = rootProject.file('keystore.properties')
+def keystoreProperties = new Properties()
+if (keystorePropertiesFile.exists()) {
+    keystoreProperties.load(new FileInputStream(keystorePropertiesFile))
+}
 
 /**
  * This is the configuration block to customize your React Native Android app.
@@ -14,6 +20,8 @@ react {
     reactNativeDir = new File([nodeExecutable, "--print", "require.resolve('react-native/package.json')"].execute(null, rootDir).text.trim()).getParentFile().getAbsoluteFile()
     hermesCommand = new File([nodeExecutable, "--print", "require.resolve('react-native/package.json')"].execute(null, rootDir).text.trim()).getParentFile().getAbsolutePath() + "/sdks/hermesc/%OS-BIN%/hermesc"
     codegenDir = new File([nodeExecutable, "--print", "require.resolve('@react-native/codegen/package.json', { paths: [require.resolve('react-native/package.json')] })"].execute(null, rootDir).text.trim()).getParentFile().getAbsoluteFile()
+
+    enableBundleCompression = (findProperty('android.enableBundleCompression') ?: false).toBoolean()
 
     // Use Expo CLI to bundle the app, this ensures the Metro config
     // works correctly with Expo projects.
@@ -67,7 +75,7 @@ react {
 /**
  * Set this to true to Run Proguard on Release builds to minify the Java bytecode.
  */
-def enableProguardInReleaseBuilds = (findProperty('android.enableProguardInReleaseBuilds') ?: false).toBoolean()
+def enableMinifyInReleaseBuilds = (findProperty('android.enableMinifyInReleaseBuilds') ?: false).toBoolean()
 
 /**
  * The preferred build flavor of JavaScriptCore (JSC)
@@ -80,7 +88,7 @@ def enableProguardInReleaseBuilds = (findProperty('android.enableProguardInRelea
  * give correct results when using with locales other than en-US. Note that
  * this variant is about 6MiB larger per architecture than default.
  */
-def jscFlavor = 'org.webkit:android-jsc:+'
+def jscFlavor = 'io.github.react-native-community:jsc-android:2026004.+'
 
 repositories {
     flatDir {
@@ -94,13 +102,23 @@ android {
     buildToolsVersion rootProject.ext.buildToolsVersion
     compileSdk rootProject.ext.compileSdkVersion
 
+    if (System.getProperty('os.name').toLowerCase().contains('windows')) {
+        def configuredCxxRoot = System.getenv('ANDROID_CXX_STAGING_ROOT')
+        def cxxRoot = configuredCxxRoot
+            ? new File(configuredCxxRoot)
+            : rootProject.file('../../../../.android-cxx')
+        externalNativeBuild.cmake.buildStagingDirectory =
+            new File(cxxRoot, 'app')
+    }
+
     namespace 'com.spur.recordingring'
     defaultConfig {
         applicationId 'com.spur.recordingring'
         minSdkVersion rootProject.ext.minSdkVersion
         targetSdkVersion rootProject.ext.targetSdkVersion
-        versionCode 1
-        versionName "0.1.0"
+        versionCode 2
+        versionName "1.0.0"
+        buildConfigField "String", "REACT_NATIVE_RELEASE_LEVEL", "\"${findProperty('reactNativeReleaseLevel') ?: 'stable'}\""
     }
     signingConfigs {
         debug {
@@ -109,17 +127,23 @@ android {
             keyAlias 'androiddebugkey'
             keyPassword 'android'
         }
+        release {
+            if (keystorePropertiesFile.exists()) {
+                storeFile file(keystoreProperties['storeFile'])
+                storePassword keystoreProperties['storePassword']
+                keyAlias keystoreProperties['keyAlias']
+                keyPassword keystoreProperties['keyPassword']
+            }
+        }
     }
     buildTypes {
         debug {
             signingConfig signingConfigs.debug
         }
         release {
-            // Caution! In production, you need to generate your own keystore file.
-            // see https://reactnative.dev/docs/signed-apk-android.
-            signingConfig signingConfigs.debug
+            signingConfig signingConfigs.release
             shrinkResources (findProperty('android.enableShrinkResourcesInReleaseBuilds')?.toBoolean() ?: false)
-            minifyEnabled enableProguardInReleaseBuilds
+            minifyEnabled enableMinifyInReleaseBuilds
             proguardFiles getDefaultProguardFile("proguard-android.txt"), "proguard-rules.pro"
             crunchPngs (findProperty('android.enablePngCrunchInReleaseBuilds')?.toBoolean() ?: true)
         }
@@ -174,15 +198,15 @@ dependencies {
 
     if (isGifEnabled) {
         // For animated gif support
-        implementation("com.facebook.fresco:animated-gif:${reactAndroidLibs.versions.fresco.get()}")
+        implementation("com.facebook.fresco:animated-gif:${expoLibs.versions.fresco.get()}")
     }
 
     if (isWebpEnabled) {
         // For webp support
-        implementation("com.facebook.fresco:webpsupport:${reactAndroidLibs.versions.fresco.get()}")
+        implementation("com.facebook.fresco:webpsupport:${expoLibs.versions.fresco.get()}")
         if (isWebpAnimatedEnabled) {
             // Animated webp support
-            implementation("com.facebook.fresco:animated-webp:${reactAndroidLibs.versions.fresco.get()}")
+            implementation("com.facebook.fresco:animated-webp:${expoLibs.versions.fresco.get()}")
         }
     }
 
