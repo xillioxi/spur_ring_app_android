@@ -6,6 +6,7 @@ import {
 import { useFocusEffect, useNavigation } from '@react-navigation/native';
 import { StatusBar } from 'expo-status-bar';
 import { Audio, type AVPlaybackStatus } from 'expo-av';
+import Svg, { Defs, LinearGradient, Rect, Stop } from 'react-native-svg';
 import {
   ArrowLeft, ArrowRight, BatteryMedium,
   ChevronRight, FileText, Heart, Home, Menu, Mic2, Pause, PenLine,
@@ -23,7 +24,7 @@ import { createLocalProject, deleteLocalProject, listLocalProjects, removeNoteFr
 
 type Tab = 'home' | 'notes' | 'processes';
 type Selected = { kind: 'note'; id: string } | { kind: 'process'; id: string } | { kind: 'project'; id: string } | null;
-type NoteFilter = 'All' | 'Ready' | 'To process';
+type NoteFilter = 'All' | 'Unsorted' | 'Sorted';
 type ProcessFilter = 'In progress' | 'Finished';
 
 const ink = '#f4f5f4';
@@ -37,9 +38,10 @@ const hero = require('../../assets/ui-v2/ring-hero-new.png');
 
 export function RingAppScreen() {
   const navigation = useNavigation<any>();
-  const { width: screenWidth } = useWindowDimensions();
+  const { width: screenWidth, height: screenHeight } = useWindowDimensions();
   const [tab, setTab] = useState<Tab>('home');
   const [selected, setSelected] = useState<Selected>(null);
+  const [returnProjectId, setReturnProjectId] = useState<string | null>(null);
   const [files, setFiles] = useState<LocalAudioFile[]>([]);
   const [analyses, setAnalyses] = useState<Record<string, LocalRecordingAnalysis>>({});
   const [cards, setCards] = useState<LocalAgentCard[]>([]);
@@ -86,30 +88,34 @@ export function RingAppScreen() {
       if (projectModal) { setProjectModal(false); return true; }
       if (projectPicker) { setProjectPicker(false); return true; }
       if (menuOpen) { setMenuOpen(false); return true; }
-      if (selected) { setSelected(null); return true; }
+      if (selected) { closeDetail(); return true; }
       if (tab !== 'home') { setTab('home'); return true; }
       return false;
     });
     return () => { officeSub.remove(); backSub.remove(); };
-  }, [menuOpen, projectModal, projectPicker, selected, tab]);
+  }, [menuOpen, projectModal, projectPicker, selected, tab, returnProjectId]);
   useEffect(() => () => { if (soundRef.current) void soundRef.current.unloadAsync(); }, []);
 
   const readyNotes = files.filter((file) => analyses[file.id]?.status === 'completed');
   const finishedProcesses = cards.filter((card) => card.status === 'completed');
   const shownNotes = useMemo(() => files.filter((file) => {
-    const ready = analyses[file.id]?.status === 'completed';
-    if (noteFilter === 'Ready' && !ready) return false;
-    if (noteFilter === 'To process' && ready) return false;
+    const sorted = projects.some((project) => project.noteIds.includes(file.id));
+    if (noteFilter === 'Sorted' && !sorted) return false;
+    if (noteFilter === 'Unsorted' && sorted) return false;
     return noteTitle(file, analyses[file.id]).toLowerCase().includes(query.toLowerCase());
-  }), [files, analyses, noteFilter, query]);
+  }), [files, analyses, projects, noteFilter, query]);
   const shownProcesses = cards.filter((card) => {
     const match = processFilter === 'Finished' ? card.status === 'completed' : card.status !== 'completed';
     return match && card.title.toLowerCase().includes(query.toLowerCase());
   });
 
-  const openNote = (file: LocalAudioFile) => setSelected({ kind: 'note', id: file.id });
+  const openNote = (file: LocalAudioFile, fromProjectId?: string) => { setReturnProjectId(fromProjectId ?? null); setSelected({ kind: 'note', id: file.id }); };
   const openProcess = (card: LocalAgentCard) => setSelected({ kind: 'process', id: card.id });
   const openProject = (project: LocalProject) => setSelected({ kind: 'project', id: project.id });
+  const closeDetail = () => {
+    if (selected?.kind === 'note' && returnProjectId) { setSelected({ kind: 'project', id: returnProjectId }); setReturnProjectId(null); }
+    else { setSelected(null); setReturnProjectId(null); }
+  };
   const addProject = async () => {
     try {
       const saved = await createLocalProject(projectName);
@@ -212,6 +218,7 @@ export function RingAppScreen() {
   };
   const changeTab = (next: Tab) => {
     setSelected(null);
+    setReturnProjectId(null);
     setTab(next);
     setQuery('');
     setSearching(false);
@@ -221,6 +228,11 @@ export function RingAppScreen() {
   const currentAnalysis = currentNote ? analyses[currentNote.id] : undefined;
   const currentCard = selected?.kind === 'process' ? cards.find((card) => card.id === selected.id) : undefined;
   const currentProject = selected?.kind === 'project' ? projects.find((project) => project.id === selected.id) : undefined;
+  const projectNotes = currentProject ? currentProject.noteIds
+    .map((id) => files.find((file) => file.id === id))
+    .filter((file): file is LocalAudioFile => Boolean(file))
+    .sort((a, b) => a.modifiedAt - b.modifiedAt) : [];
+  const noteProjects = currentNote ? projects.filter((project) => project.noteIds.includes(currentNote.id)) : [];
 
   return (
     <View style={s.root}>
@@ -228,32 +240,37 @@ export function RingAppScreen() {
       {selected ? (
         <ScrollView contentContainerStyle={s.detailContent}>
           <View style={s.detailTop}>
-            <Pressable onPress={() => setSelected(null)} accessibilityLabel="Back"><ArrowLeft size={20} color={ink} /></Pressable>
+            <Pressable onPress={closeDetail} accessibilityLabel="Back"><ArrowLeft size={20} color={ink} /></Pressable>
             <Text style={s.detailTopTitle} numberOfLines={1}>{currentNote ? noteTitle(currentNote, currentAnalysis) : currentProject?.title || currentCard?.title || 'Process'}</Text>
-            {!currentProject && <Pressable onPress={() => void shareSelected()} accessibilityLabel="Share capture"><Share2 size={18} color={ink} /></Pressable>}
+            {currentProject ? <Pressable onPress={() => setProjectPicker(true)} accessibilityLabel="Add notes"><Plus size={20} color={ink} /></Pressable> : <Pressable onPress={() => void shareSelected()} accessibilityLabel="Share capture"><Share2 size={18} color={ink} /></Pressable>}
           </View>
           {currentProject ? <>
-            <View style={s.projectDetailHeader}>
-              <Text style={s.detailSectionTitle}>{currentProject.noteIds.length} {currentProject.noteIds.length === 1 ? 'note' : 'notes'}</Text>
-              <Text style={s.hint}>Created {dateLabel(currentProject.createdAt)}</Text>
+            <View style={s.projectOverview}>
+              <Text style={s.overviewTitle}>Overview</Text>
+              <Text style={s.overviewText}>{projectNotes.length ? `${projectNotes.length} ${projectNotes.length === 1 ? 'note' : 'notes'} in ${currentProject.title}. Follow the sequence below to review each capture.` : 'This project is ready for notes. Add captures to build its sequence.'}</Text>
             </View>
-            <Pressable style={s.primaryAction} onPress={() => setProjectPicker(true)} accessibilityLabel="Add notes to project"><Plus color="#121818" size={17} /><Text style={s.primaryActionText}>Add notes</Text></Pressable>
-            <View style={s.listPanel}>
-              {currentProject.noteIds.length ? currentProject.noteIds.map((id) => {
-                const file = files.find((item) => item.id === id);
-                return file ? <Pressable key={id} style={s.listRow} onPress={() => openNote(file)}><FileText color={orange} size={20} /><View style={s.grow}><Text style={s.rowTitle}>{noteTitle(file, analyses[id])}</Text><Text style={s.rowSub}>{dateLabel(file.modifiedAt)}</Text></View><ChevronRight color={muted} size={16} /></Pressable> : null;
-              }) : <Text style={s.emptyText}>No notes yet. Add recordings to organize them here.</Text>}
+            {projectNotes.slice(0, 3).map((file) => <Pressable key={file.id} style={s.projectPreviewRow} onPress={() => openNote(file, currentProject.id)}>
+              <FileText color={muted} size={25} /><View style={s.grow}><Text style={s.entryTitle}>{noteTitle(file, analyses[file.id])}</Text><Text style={s.entryCaption} numberOfLines={1}>{notePreview(analyses[file.id])}</Text></View><ChevronRight color={muted} size={16} />
+            </Pressable>)}
+            {projectNotes.length > 3 && <Text style={s.moreEntries}>+ {projectNotes.length - 3} more in sequence</Text>}
+            <View style={s.projectSequenceHeader}><Text style={s.detailSectionTitle}>Sequence</Text><Pressable onPress={() => setProjectPicker(true)} accessibilityLabel="Edit sequence"><Plus size={18} color={muted} /></Pressable></View>
+            <View style={s.projectSequenceCard}>
+              {projectNotes.length ? projectNotes.map((file, index) => <Pressable key={file.id} style={s.projectSequenceRow} onPress={() => openNote(file, currentProject.id)}>
+                <View style={s.projectTimeline}><View style={[s.timelineDot, { backgroundColor: [red, mint, orange, violet][index % 4] }]} />{index < projectNotes.length - 1 && <View style={s.timelineLine} />}</View>
+                <View style={s.grow}><Text style={s.sequenceMeta}>{dateLabel(file.modifiedAt)}</Text><Text style={s.entryTitle}>{noteTitle(file, analyses[file.id])}</Text><Text style={s.entryCaption} numberOfLines={2}>{notePreview(analyses[file.id])}</Text></View><ChevronRight color={muted} size={16} />
+              </Pressable>) : <Pressable onPress={() => setProjectPicker(true)}><Text style={s.emptyText}>Add notes to start this sequence.</Text></Pressable>}
             </View>
             <Pressable style={[s.utilityAction, s.deleteProject]} onPress={() => removeProject(currentProject)}><Trash2 color={red} size={17} /><Text style={s.utilityText}>Delete project</Text></Pressable>
-          </> : <View style={s.overviewCard}>
+          </> : currentCard ? <View style={s.overviewCard}>
             <Text style={s.overviewTitle}>Overview</Text>
             <Text style={s.overviewText}>
-              {currentAnalysis?.meetingNotes || currentCard?.summary || currentCard?.output || 'This capture is ready for processing.'}
+              {currentCard.summary || currentCard.output || 'This capture is ready for processing.'}
             </Text>
-          </View>}
+          </View> : null}
           {currentNote ? (
             <>
-              <View style={s.sectionRow}><Text style={s.detailSectionTitle}>Capture</Text><Text style={s.hint}>{dateLabel(currentNote.modifiedAt)}</Text></View>
+              <View style={s.noteMetaRow}><Text style={s.hint}>{dateLabel(currentNote.modifiedAt)}</Text><Text style={s.hint}>{noteProjects.length ? 'Sorted' : 'Unsorted'}</Text></View>
+              <Pressable style={s.projectMembership} onPress={() => setProjectPicker(true)}><FileText color={mint} size={17} /><View style={s.grow}><Text style={s.utilityText}>{noteProjects.length ? 'Projects' : 'Unsorted'}</Text><Text style={s.rowSub}>{noteProjects.length ? noteProjects.map((project) => project.title).join(', ') : 'Add this note to a project'}</Text></View><ChevronRight color={muted} size={16} /></Pressable>
               <View style={s.detailActions}>
                 <Pressable style={s.utilityAction} onPress={() => void togglePlayback(currentNote.uri)}>
                   {playingUri === currentNote.uri && isPlaying ? <Pause color={ink} size={17} /> : <Play color={ink} size={17} />}
@@ -261,21 +278,10 @@ export function RingAppScreen() {
                 </Pressable>
                 <Pressable style={s.utilityAction} onPress={() => removeNote(currentNote)}><Trash2 color={red} size={17} /><Text style={s.utilityText}>Delete</Text></Pressable>
               </View>
-              <Pressable style={s.projectMembership} onPress={() => setProjectPicker(true)}><Plus color={mint} size={17} /><Text style={s.utilityText}>Projects</Text><Text style={s.rowSub}>{projects.filter((project) => project.noteIds.includes(currentNote.id)).map((project) => project.title).join(', ') || 'Add to a project'}</Text><ChevronRight color={muted} size={16} /></Pressable>
               {currentAnalysis?.status !== 'completed' && <Pressable disabled={busy} style={s.primaryAction} onPress={() => void processNote(currentNote)}><Sparkles color="#121818" size={16} /><Text style={s.primaryActionText}>{busy ? 'Processing…' : 'Process recording'}</Text></Pressable>}
-              {currentAnalysis?.status === 'completed' && <>
-              <Pressable style={s.detailEntry} onPress={() => navigation.navigate('RecordingSummary', { id: currentNote.id })}>
-                <View style={s.entryAccent} /><View style={s.grow}><Text style={s.entryTitle}>Notes and AI tools</Text><Text style={s.entryCaption}>Summaries, templates and questions</Text></View><ChevronRight size={17} color={muted} />
-              </Pressable>
-              <Pressable style={s.detailEntry} onPress={() => navigation.navigate('RecordingSummary', { id: currentNote.id, tab: 'transcript' })}>
-                <View style={[s.entryAccent, { backgroundColor: violet }]} /><View style={s.grow}><Text style={s.entryTitle}>Transcript</Text><Text style={s.entryCaption} numberOfLines={1}>{currentAnalysis.transcript || 'Open transcript'}</Text></View><ChevronRight size={17} color={muted} />
-              </Pressable>
-              </>}
-              <Text style={s.detailSectionTitle}>Sequence</Text>
-              <View style={s.sequenceCard}>
-                <SequenceStep color={orange} title="Captured" description={dateLabel(currentNote.modifiedAt)} />
-                {currentAnalysis?.status === 'completed' ? <><SequenceStep color={mint} title="Transcribed" description={currentAnalysis.transcriptionProvider || 'Audio to text'} /><SequenceStep color={mint} title="Notes ready" description="Open the full tools to generate more" last /></> : <SequenceStep color={orange} title="Ready to process" description="Generate transcript and notes" last />}
-              </View>
+              <View style={s.noteContentCard}><Text style={s.overviewTitle}>AI summary</Text><Text style={s.noteContentText}>{currentAnalysis?.meetingNotes || 'Process this recording to generate an AI summary.'}</Text></View>
+              <View style={s.noteContentCard}><Text style={s.overviewTitle}>Transcript</Text><Text style={s.noteContentText}>{currentAnalysis?.transcript || 'Process this recording to see its transcript.'}</Text></View>
+              {currentAnalysis?.status === 'completed' && <Pressable style={s.detailEntry} onPress={() => navigation.navigate('RecordingSummary', { id: currentNote.id })}><View style={s.entryAccent} /><View style={s.grow}><Text style={s.entryTitle}>More AI tools</Text><Text style={s.entryCaption}>Templates and questions</Text></View><ChevronRight size={17} color={muted} /></Pressable>}
             </>
           ) : currentCard ? (
             <>
@@ -305,6 +311,7 @@ export function RingAppScreen() {
         </ScrollView>
       ) : (
         <>
+          {tab !== 'home' && <TabGlow tone={tab} width={screenWidth} height={screenHeight} />}
           <ScrollView contentContainerStyle={s.pageContent}>
             {tab === 'home' ? (
               <>
@@ -364,10 +371,10 @@ export function RingAppScreen() {
                     </ScrollView>
                     <View style={s.sectionRow}><Text style={s.sectionTitle}>Recent notes</Text><Pressable onPress={() => setNoteFilter('All')} accessibilityLabel="Show all notes"><ArrowRight color={muted} size={18} /></Pressable></View>
                     <View style={s.listPanel}>
-                      <View style={s.filterRow}>{(['All', 'Ready', 'To process'] as NoteFilter[]).map((filter) => <Chip key={filter} label={filter} selected={noteFilter === filter} onPress={() => setNoteFilter(filter)} />)}</View>
+                       <View style={s.filterRow}>{(['All', 'Unsorted', 'Sorted'] as NoteFilter[]).map((filter) => <Chip key={filter} label={filter} selected={noteFilter === filter} onPress={() => setNoteFilter(filter)} />)}</View>
                       {shownNotes.length ? shownNotes.map((file, index) => <View key={file.id}>
                         {(index === 0 || dayKey(file.modifiedAt) !== dayKey(shownNotes[index - 1].modifiedAt)) && <Text style={s.dateHeading}>{dateLabel(file.modifiedAt)}</Text>}
-                        <Pressable style={s.listRow} onPress={() => openNote(file)}><View style={[s.colorBar, { backgroundColor: [orange, violet, red, mint][index % 4] }]} /><View style={s.grow}><Text style={s.rowTitle} numberOfLines={1}>{noteTitle(file, analyses[file.id])}</Text><Text style={s.rowSub}>{analyses[file.id]?.status === 'completed' ? 'Summary and transcript available' : 'Tap to process recording'}</Text></View><ChevronRight color={muted} size={16} /></Pressable>
+                         <Pressable style={s.listRow} onPress={() => openNote(file)}><View style={[s.colorBar, { backgroundColor: [orange, violet, red, mint][index % 4] }]} /><View style={s.grow}><Text style={s.rowTitle} numberOfLines={1}>{noteTitle(file, analyses[file.id])}</Text><Text style={s.rowSub} numberOfLines={1}>{projects.filter((project) => project.noteIds.includes(file.id)).map((project) => project.title).join(', ') || 'Unsorted'} · {analyses[file.id]?.status === 'completed' ? 'Summary ready' : 'To process'}</Text></View><ChevronRight color={muted} size={16} /></Pressable>
                       </View>) : <Text style={s.emptyText}>No notes match this view.</Text>}
                     </View>
                   </>
@@ -385,6 +392,7 @@ export function RingAppScreen() {
             )}
           </ScrollView>
           <View style={s.navBar}>
+            {tab !== 'home' && <NavGlow tone={tab} width={screenWidth} />}
             <NavItem icon={<Home color={tab === 'home' ? ink : muted} size={20} />} label="Home" active={tab === 'home'} onPress={() => changeTab('home')} />
             <NavItem icon={<PenLine color={tab === 'notes' ? ink : muted} size={20} />} label="Notes" active={tab === 'notes'} onPress={() => changeTab('notes')} />
             <NavItem icon={<Settings2 color={tab === 'processes' ? ink : muted} size={20} />} label="Processes" active={tab === 'processes'} onPress={() => changeTab('processes')} />
@@ -435,6 +443,18 @@ export function RingAppScreen() {
 function Chip({ label, selected, onPress }: { label: string; selected: boolean; onPress: () => void }) {
   return <Pressable onPress={onPress} style={[s.chip, selected && s.chipSelected]}><Text style={[s.chipText, selected && s.chipTextSelected]}>{label}</Text></Pressable>;
 }
+function TabGlow({ tone, width, height }: { tone: 'notes' | 'processes'; width: number; height: number }) {
+  return <Svg pointerEvents="none" style={StyleSheet.absoluteFillObject} width={width} height={height}>
+    <Defs><LinearGradient id="tabGlow" x1="0%" y1="0%" x2="100%" y2="100%"><Stop offset="0%" stopColor="#050909" /><Stop offset="56%" stopColor="#050909" /><Stop offset="100%" stopColor={tone === 'notes' ? '#2f5756' : '#b86166'} /></LinearGradient></Defs>
+    <Rect width="100%" height="100%" fill="url(#tabGlow)" />
+  </Svg>;
+}
+function NavGlow({ tone, width }: { tone: 'notes' | 'processes'; width: number }) {
+  return <Svg pointerEvents="none" style={StyleSheet.absoluteFillObject} width={width} height={73}>
+    <Defs><LinearGradient id="navGlow" x1="0%" y1="0%" x2="100%" y2="0%"><Stop offset="0%" stopColor={tone === 'notes' ? '#142726' : '#201618'} /><Stop offset="100%" stopColor={tone === 'notes' ? '#2f5756' : '#b86166'} /></LinearGradient></Defs>
+    <Rect width="100%" height="100%" fill="url(#navGlow)" />
+  </Svg>;
+}
 function NavItem({ icon, label, active, onPress }: { icon: React.ReactNode; label: string; active: boolean; onPress: () => void }) {
   return <Pressable onPress={onPress} style={s.navItem}>{icon}<Text style={[s.navLabel, active && s.navLabelActive]}>{label}</Text>{active && <View style={s.navDot} />}</Pressable>;
 }
@@ -444,6 +464,11 @@ function SequenceStep({ color, title, description, last }: { color: string; titl
 function noteTitle(file: LocalAudioFile, analysis?: LocalRecordingAnalysis) {
   return (analysis?.status === 'completed' && titleFromMeetingNotes(analysis.meetingNotes, 45)) || file.name.replace(/\.(ogg|m4a)$/i, '').replace(/[_-]+/g, ' ');
 }
+function notePreview(analysis?: LocalRecordingAnalysis) {
+  const lines = (analysis?.meetingNotes || '').split(/\r?\n/).map((line) => line.trim()).filter(Boolean);
+  const executiveSummary = lines.findIndex((line) => /^executive summary:?$/i.test(line));
+  return (executiveSummary >= 0 ? lines[executiveSummary + 1] : lines.find((line) => line.length > 55)) || analysis?.transcript || 'Transcript and summary pending';
+}
 function processColor(status: LocalAgentCard['status']) { return status === 'completed' ? mint : status === 'failed' ? red : status === 'processing' ? violet : orange; }
 function statusLabel(status: LocalAgentCard['status']) { return status === 'completed' ? 'Finished' : status === 'failed' ? 'Needs retry' : status === 'processing' ? 'In progress' : 'Ready to process'; }
 function dayKey(value: number) { return new Date(value).toDateString(); }
@@ -451,10 +476,10 @@ function dateLabel(value: number) { return new Date(value).toLocaleDateString(un
 
 const s = StyleSheet.create({
   root: { flex: 1, backgroundColor: '#050909' },
-  pageContent: { paddingHorizontal: 22, paddingTop: 42, paddingBottom: 30 },
-  hero: { height: 390, borderRadius: 3, overflow: 'hidden', marginHorizontal: -22, marginTop: -42 },
+  pageContent: { paddingHorizontal: 22, paddingTop: 50, paddingBottom: 30 },
+  hero: { height: 390, borderRadius: 3, overflow: 'hidden', marginHorizontal: -22, marginTop: -50 },
   heroImage: { position: 'absolute', top: -50, left: 0 }, heroShade: { ...StyleSheet.absoluteFillObject, backgroundColor: 'rgba(0,10,15,0.12)' },
-  heroTop: { flexDirection: 'row', justifyContent: 'space-between', alignItems: 'flex-start', paddingHorizontal: 26, paddingTop: 50 },
+  heroTop: { flexDirection: 'row', justifyContent: 'space-between', alignItems: 'flex-start', paddingHorizontal: 26, paddingTop: 58 },
   battery: { flexDirection: 'row', alignItems: 'center', gap: 8, paddingTop: 45 }, batteryText: { color: ink, fontSize: 17, fontWeight: '700' },
   statsRow: { flexDirection: 'row', gap: 12, marginTop: -53, marginBottom: 11 },
   statCard: { flex: 1, height: 72, borderRadius: 17, padding: 12, flexDirection: 'row', alignItems: 'flex-start', gap: 8, overflow: 'hidden' },
@@ -471,8 +496,8 @@ const s = StyleSheet.create({
   chip: { borderWidth: 1, borderColor: '#777d7d', paddingHorizontal: 13, paddingVertical: 5, borderRadius: 99 }, chipSelected: { backgroundColor: '#e3e5e4', borderColor: '#e3e5e4' }, chipText: { color: '#c7caca', fontSize: 9, fontWeight: '700' }, chipTextSelected: { color: '#101415' },
   dateHeading: { color: ink, fontSize: 10, fontWeight: '800', marginTop: 3, marginBottom: 7 }, listRow: { minHeight: 53, flexDirection: 'row', alignItems: 'center', gap: 12, paddingHorizontal: 8 }, colorBar: { width: 2, height: 17, borderRadius: 1, marginRight: 25 },
   processAction: { flexDirection: 'row', alignItems: 'center', gap: 9, padding: 16, backgroundColor: panel, borderRadius: 16, marginTop: 13 },
-  navBar: { height: 73, backgroundColor: '#050909', flexDirection: 'row', justifyContent: 'space-around', paddingTop: 9 }, navItem: { width: 72, alignItems: 'center', gap: 3 }, navLabel: { color: muted, fontSize: 9 }, navLabelActive: { color: ink }, navDot: { width: 4, height: 4, backgroundColor: red, borderRadius: 2, position: 'absolute', top: -1, right: 24 },
-  detailContent: { paddingHorizontal: 22, paddingTop: 21, paddingBottom: 40 }, detailTop: { minHeight: 45, flexDirection: 'row', alignItems: 'center', gap: 12 }, detailTopTitle: { color: ink, fontSize: 13, fontWeight: '700', flex: 1 },
+  navBar: { height: 73, backgroundColor: 'transparent', flexDirection: 'row', justifyContent: 'space-around', paddingTop: 9 }, navItem: { width: 72, alignItems: 'center', gap: 3 }, navLabel: { color: muted, fontSize: 9 }, navLabelActive: { color: ink }, navDot: { width: 4, height: 4, backgroundColor: red, borderRadius: 2, position: 'absolute', top: -1, right: 24 },
+  detailContent: { paddingHorizontal: 22, paddingTop: 42, paddingBottom: 40 }, detailTop: { minHeight: 45, flexDirection: 'row', alignItems: 'center', gap: 12 }, detailTopTitle: { color: ink, fontSize: 13, fontWeight: '700', flex: 1 },
   overviewCard: { backgroundColor: panel, borderRadius: 18, padding: 18, marginTop: 15, marginBottom: 25, maxHeight: 180 }, overviewTitle: { color: ink, fontSize: 13, fontWeight: '700', marginBottom: 9 }, overviewText: { color: '#d0d4d3', fontSize: 10, lineHeight: 15 },
   detailSectionTitle: { color: ink, fontSize: 13, fontWeight: '700', marginBottom: 12 }, hint: { color: muted, fontSize: 9 }, detailEntry: { minHeight: 67, flexDirection: 'row', alignItems: 'center', gap: 15, marginBottom: 6, paddingHorizontal: 10 }, entryAccent: { width: 3, height: 23, backgroundColor: orange }, entryTitle: { color: ink, fontSize: 11, fontWeight: '700' }, entryCaption: { color: muted, fontSize: 9, marginTop: 5 },
   sequenceCard: { backgroundColor: panel, borderRadius: 18, paddingHorizontal: 17, paddingTop: 20, paddingBottom: 4 }, sequenceRow: { flexDirection: 'row', gap: 16, minHeight: 78, alignItems: 'flex-start' }, timeline: { alignItems: 'center', width: 13, height: 78 }, timelineDot: { width: 7, height: 7, borderRadius: 4, marginTop: 6 }, timelineLine: { flex: 1, width: 2, backgroundColor: '#d4d7d7', marginTop: 3 },
@@ -480,7 +505,17 @@ const s = StyleSheet.create({
   detailActions: { flexDirection: 'row', flexWrap: 'wrap', gap: 8, marginBottom: 17 },
   utilityAction: { flexDirection: 'row', alignItems: 'center', gap: 7, borderRadius: 12, backgroundColor: panel, paddingHorizontal: 11, paddingVertical: 10 },
   utilityText: { color: ink, fontSize: 10, fontWeight: '700' },
-  projectDetailHeader: { flexDirection: 'row', alignItems: 'center', justifyContent: 'space-between', marginTop: 24 },
+  projectOverview: { backgroundColor: panel, borderRadius: 18, padding: 18, marginTop: 20, marginBottom: 28, minHeight: 90 },
+  projectPreviewRow: { flexDirection: 'row', alignItems: 'center', gap: 13, minHeight: 68, paddingHorizontal: 10 },
+  moreEntries: { color: '#d4d7d7', textAlign: 'center', fontSize: 10, marginVertical: 12 },
+  projectSequenceHeader: { flexDirection: 'row', alignItems: 'center', justifyContent: 'space-between', marginTop: 20 },
+  projectSequenceCard: { backgroundColor: panel, borderRadius: 18, paddingHorizontal: 18, paddingTop: 22, paddingBottom: 14, minHeight: 150 },
+  projectSequenceRow: { flexDirection: 'row', alignItems: 'flex-start', gap: 14, minHeight: 92 },
+  projectTimeline: { alignItems: 'center', width: 13, height: 92 },
+  sequenceMeta: { color: muted, fontSize: 9, marginBottom: 5 },
+  noteMetaRow: { flexDirection: 'row', justifyContent: 'space-between', marginTop: 18, marginBottom: 13 },
+  noteContentCard: { backgroundColor: panel, borderRadius: 18, padding: 18, marginBottom: 17 },
+  noteContentText: { color: '#d0d4d3', fontSize: 12, lineHeight: 19 },
   projectMembership: { backgroundColor: panel, borderRadius: 12, minHeight: 52, flexDirection: 'row', alignItems: 'center', gap: 9, paddingHorizontal: 14, marginBottom: 18 },
   deleteProject: { alignSelf: 'flex-start', marginTop: 22 },
   dialogBackdrop: { flex: 1, backgroundColor: 'rgba(0,0,0,0.76)', justifyContent: 'center', paddingHorizontal: 22 },
