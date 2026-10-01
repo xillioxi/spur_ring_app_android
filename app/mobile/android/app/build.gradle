@@ -7,6 +7,7 @@ def projectRoot = rootDir.getAbsoluteFile().getParentFile().getAbsolutePath()
 def nodeExecutable = System.getenv('NODE_BINARY') ?: 'node'
 def keystorePropertiesFile = rootProject.file('keystore.properties')
 def keystoreProperties = new Properties()
+def useDebugSigningForLocalTest = (findProperty('spur.localTestSigning') ?: false).toBoolean()
 if (keystorePropertiesFile.exists()) {
     keystoreProperties.load(new FileInputStream(keystorePropertiesFile))
 }
@@ -116,8 +117,10 @@ android {
         applicationId 'com.spur.recordingring'
         minSdkVersion rootProject.ext.minSdkVersion
         targetSdkVersion rootProject.ext.targetSdkVersion
-        versionCode 2
-        versionName "1.0.0"
+        // Always increment this for install-in-place test APKs. Reusing a version code
+        // encourages uninstall/reinstall flows, which erase app-private recordings.
+        versionCode 9
+        versionName "1.0.7"
         buildConfigField "String", "REACT_NATIVE_RELEASE_LEVEL", "\"${findProperty('reactNativeReleaseLevel') ?: 'stable'}\""
     }
     signingConfigs {
@@ -141,7 +144,7 @@ android {
             signingConfig signingConfigs.debug
         }
         release {
-            signingConfig signingConfigs.release
+            signingConfig useDebugSigningForLocalTest ? signingConfigs.debug : signingConfigs.release
             shrinkResources (findProperty('android.enableShrinkResourcesInReleaseBuilds')?.toBoolean() ?: false)
             minifyEnabled enableMinifyInReleaseBuilds
             proguardFiles getDefaultProguardFile("proguard-android.txt"), "proguard-rules.pro"
@@ -181,6 +184,7 @@ android {
 dependencies {
     // The version of react-native is set by the React Native Gradle Plugin
     implementation("com.facebook.react:react-android")
+    implementation("com.squareup.okhttp3:okhttp:4.12.0")
 
     // Yanqiang / aizo SDK AARs from android/app/libs
     implementation fileTree(dir: 'libs', include: ['*.jar', '*.aar'])

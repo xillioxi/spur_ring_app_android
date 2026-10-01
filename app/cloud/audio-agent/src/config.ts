@@ -3,7 +3,7 @@ import { fileURLToPath } from 'url'
 
 export type AudioAgentConfig = {
   port: number
-  sttProvider: 'mock' | 'volcengine'
+  sttProvider: 'mock' | 'volcengine' | 'elevenlabs'
   appRoot: string
   parentRoot: string
   dataDir: string
@@ -26,6 +26,17 @@ export type AudioAgentConfig = {
     saucResourceId: string
     language: string
     pollIntervalMs: number
+    timeoutMs: number
+  }
+  elevenlabs: {
+    apiKey: string
+    endpoint: string
+    modelId: string
+    languageCode: string
+    diarize: boolean
+    tagAudioEvents: boolean
+    useSpeakerLibrary: boolean
+    numSpeakers?: number
     timeoutMs: number
   }
   deepseek: {
@@ -59,9 +70,11 @@ export function getConfig(): AudioAgentConfig {
 
   return {
     port: Number(process.env.AUDIO_AGENT_PORT || 8787),
-    sttProvider: (process.env.AUDIO_AGENT_STT_PROVIDER || 'mock') as
+    sttProvider: (process.env.AUDIO_AGENT_STT_PROVIDER ||
+      (process.env.ELEVENLABS_API_KEY ? 'elevenlabs' : 'mock')) as
       | 'mock'
-      | 'volcengine',
+      | 'volcengine'
+      | 'elevenlabs',
     appRoot,
     parentRoot,
     dataDir: process.env.AUDIO_AGENT_DATA_DIR || join(appRoot, 'data'),
@@ -100,6 +113,20 @@ export function getConfig(): AudioAgentConfig {
       pollIntervalMs: Number(process.env.VOLCENGINE_ASR_POLL_INTERVAL_MS || 1000),
       timeoutMs: Number(process.env.VOLCENGINE_ASR_TIMEOUT_MS || 180000),
     },
+    elevenlabs: {
+      apiKey: process.env.ELEVENLABS_API_KEY || '',
+      endpoint:
+        process.env.ELEVENLABS_STT_ENDPOINT ||
+        'https://api.elevenlabs.io/v1/speech-to-text',
+      modelId: process.env.ELEVENLABS_STT_MODEL || 'scribe_v2',
+      languageCode: process.env.ELEVENLABS_STT_LANGUAGE || '',
+      diarize: process.env.ELEVENLABS_STT_DIARIZE !== '0',
+      tagAudioEvents: process.env.ELEVENLABS_STT_TAG_AUDIO_EVENTS !== '0',
+      useSpeakerLibrary:
+        process.env.ELEVENLABS_STT_USE_SPEAKER_LIBRARY === '1',
+      numSpeakers: optionalSpeakerCount(process.env.ELEVENLABS_STT_NUM_SPEAKERS),
+      timeoutMs: Number(process.env.ELEVENLABS_STT_TIMEOUT_MS || 300000),
+    },
     deepseek: {
       apiKey: process.env.DEEPSEEK_API_KEY || '',
       baseUrl: process.env.DEEPSEEK_BASE_URL || 'https://api.deepseek.com',
@@ -122,4 +149,12 @@ export function getConfig(): AudioAgentConfig {
       smtpPass: process.env.SMTP_PASS || '',
     },
   }
+}
+
+function optionalSpeakerCount(value: string | undefined): number | undefined {
+  if (!value?.trim()) return undefined
+  const parsed = Number(value)
+  return Number.isInteger(parsed) && parsed >= 1 && parsed <= 32
+    ? parsed
+    : undefined
 }

@@ -1,13 +1,17 @@
 package com.spur.recordingring.yanqiang;
 
+import android.Manifest;
 import android.app.Application;
 import android.bluetooth.BluetoothAdapter;
 import android.bluetooth.BluetoothManager;
 import android.bluetooth.le.BluetoothLeScanner;
 import android.content.Context;
 import android.content.Intent;
+import android.content.SharedPreferences;
+import android.content.pm.PackageManager;
 import android.os.Handler;
 import android.os.Looper;
+import android.provider.Settings;
 import android.util.Log;
 
 import androidx.annotation.NonNull;
@@ -49,6 +53,7 @@ import com.tencent.mmkv.MMKV;
 import java.io.File;
 import java.io.FileOutputStream;
 import java.io.IOException;
+import java.lang.ref.WeakReference;
 import java.util.List;
 import java.util.concurrent.atomic.AtomicBoolean;
 import java.util.concurrent.atomic.AtomicInteger;
@@ -60,6 +65,11 @@ public class YanqiangVoiceModule extends ReactContextBaseJavaModule {
   private static final long CONNECT_AFTER_SCAN_DELAY_MS = 800L;
   private static final long RECORDING_SYNC_TIMEOUT_MS = 180_000L;
   private static final long STALE_SYNC_LOCK_MS = 15_000L;
+  private static final long BACKGROUND_RECONNECT_THROTTLE_MS = 15_000L;
+  private static final String PREFS_NAME = "spur-ring-background-sync";
+  private static final String PREF_RING_MAC = "ring-mac";
+  private static final String PREF_ELEVENLABS_API_KEY = "elevenlabs-api-key";
+  private static WeakReference<YanqiangVoiceModule> activeModule = new WeakReference<>(null);
 
   private boolean sdkInitialized = false;
   private boolean syncInProgress = false;
@@ -68,11 +78,23 @@ public class YanqiangVoiceModule extends ReactContextBaseJavaModule {
   private volatile long syncGeneration = 0L;
   private String currentMacAddress = null;
   private int listenerCount = 0;
+  private volatile boolean vendorConnected = false;
+  private volatile boolean connectionInProgress = false;
+  private volatile long lastBackgroundReconnectAt = 0L;
+  private volatile long lastDoubleClickAt = 0L;
 
   private final DeviceWorkingStateCallback workingStateCallback = new DeviceWorkingStateCallback() {
     @Override
     public void onState(@NonNull DeviceWorkingState state) {
       currentWorkingState = state.getState();
+      // Some firmware reports hold/release only as recording-state transitions. Do not treat the
+      // state=2 transition caused by a double-click as dictation; double-click keeps its original
+      // record-toggle behavior.
+      if (state.getState() == 2 && System.currentTimeMillis() - lastDoubleClickAt > 900L) {
+        RingDictationAccessibilityService.startFromRing();
+      } else if (state.getState() == 4 && RingDictationAccessibilityService.isListening()) {
+        RingDictationAccessibilityService.stopFromRing();
+      }
       WritableMap body = Arguments.createMap();
       body.putInt("function", state.getFunction());
       body.putInt("state", state.getState());
@@ -86,10 +108,18 @@ public class YanqiangVoiceModule extends ReactContextBaseJavaModule {
     @Override
     public void onSmartTouchEvent(@NonNull List<SmartTouchEventModel> events) {
       for (SmartTouchEventModel event : events) {
+        String action = mapSmartTouchEvent(event.getEvent());
+        if ("double_click".equals(action)) {
+          lastDoubleClickAt = System.currentTimeMillis();
+        } else if ("long_press".equals(action)) {
+          RingDictationAccessibilityService.startFromRing();
+        } else if ("release_press".equals(action)) {
+          RingDictationAccessibilityService.stopFromRing();
+        }
         WritableMap body = Arguments.createMap();
         body.putDouble("timestamp", event.getTime());
         body.putInt("event", event.getEvent());
-        body.putString("action", mapSmartTouchEvent(event.getEvent()));
+        body.putString("action", action);
         sendEvent("yanqiangSmartTouchEvent", body);
       }
     }
@@ -98,6 +128,7 @@ public class YanqiangVoiceModule extends ReactContextBaseJavaModule {
   private final AizoDeviceConnectCallback connectCallback = new AizoDeviceConnectCallback() {
     @Override
     public void connect() {
+      connectionInProgress = false;
       // Match the old DreameRing integration: finalize the vendor-side binding before exposing
       // the connection as ready. File transfer commands may fail if this step is skipped.
       ServiceSdkCommandV2.INSTANCE.notifyBoundDevice("DREAME RING", currentMacAddress, new BCallback() {
@@ -108,9 +139,12 @@ public class YanqiangVoiceModule extends ReactContextBaseJavaModule {
           body.putString("macAddress", currentMacAddress);
           body.putBoolean("vendorReady", success);
           if (success) {
+            vendorConnected = true;
             ServiceSdkCommandV2.INSTANCE.requestConnectionPriority();
+            enableTouchReportingForRingControls();
             body.putString("status", "connected");
           } else {
+            vendorConnected = false;
             body.putString("status", "error");
             body.putString("message", "Vendor notifyBoundDevice failed");
           }
@@ -121,6 +155,8 @@ public class YanqiangVoiceModule extends ReactContextBaseJavaModule {
 
     @Override
     public void disconnect() {
+      connectionInProgress = false;
+      vendorConnected = false;
       WritableMap body = Arguments.createMap();
       body.putString("status", "disconnected");
       body.putString("macAddress", currentMacAddress);
@@ -129,6 +165,8 @@ public class YanqiangVoiceModule extends ReactContextBaseJavaModule {
 
     @Override
     public void connectError(@NonNull Throwable throwable, int state) {
+      connectionInProgress = false;
+      vendorConnected = false;
       WritableMap body = Arguments.createMap();
       body.putString("status", "error");
       body.putString("macAddress", currentMacAddress);
@@ -140,6 +178,60 @@ public class YanqiangVoiceModule extends ReactContextBaseJavaModule {
 
   public YanqiangVoiceModule(ReactApplicationContext reactContext) {
     super(reactContext);
+    activeModule = new WeakReference<>(this);
+  }
+
+  public static boolean hasSavedRing(@NonNull Context context) {
+    return !context.getSharedPreferences(PREFS_NAME, Context.MODE_PRIVATE)
+        .getString(PREF_RING_MAC, "").isEmpty();
+  }
+
+  public static void requestBackgroundPoll() {
+    YanqiangVoiceModule module = activeModule.get();
+    if (module == null) {
+      Log.w(TAG, "background poll skipped: React Native module is not ready");
+      return;
+    }
+    new Handler(Looper.getMainLooper()).post(module::runBackgroundPoll);
+  }
+
+  public static boolean emitRingDictationAudio(@NonNull File file) {
+    YanqiangVoiceModule module = activeModule.get();
+    if (module == null) {
+      Log.w(TAG, "dictation audio skipped: React Native module is not ready");
+      return false;
+    }
+    try {
+      WritableMap body = Arguments.createMap();
+      body.putString("uri", "file://" + file.getAbsolutePath());
+      body.putString("name", file.getName());
+      body.putDouble("size", file.length());
+      module.sendEvent("yanqiangDictationAudioReady", body);
+      return true;
+    } catch (Throwable error) {
+      Log.e(TAG, "unable to send dictation audio to Spur transcription", error);
+      return false;
+    }
+  }
+
+  public static boolean emitRingDictationStream(
+      @NonNull String type, @Nullable String audioBase64, int sampleRate) {
+    YanqiangVoiceModule module = activeModule.get();
+    if (module == null) {
+      Log.w(TAG, "dictation stream skipped: React Native module is not ready");
+      return false;
+    }
+    try {
+      WritableMap body = Arguments.createMap();
+      body.putString("type", type);
+      body.putInt("sampleRate", sampleRate);
+      if (audioBase64 != null) body.putString("audioBase64", audioBase64);
+      module.sendEvent("yanqiangDictationStream", body);
+      return true;
+    } catch (Throwable error) {
+      Log.e(TAG, "unable to send realtime dictation event", error);
+      return false;
+    }
   }
 
   @NonNull
@@ -288,6 +380,9 @@ public class YanqiangVoiceModule extends ReactContextBaseJavaModule {
     try {
       ensureInitialized();
       currentMacAddress = macAddress;
+      connectionInProgress = true;
+      persistRingMac(macAddress);
+      RingBackgroundSyncService.start(getReactApplicationContext());
       // The vendor scanner releases Bluetooth asynchronously. Connecting before its end callback
       // can be reported by the SDK as the generic bind error 1001.
       ServiceSdkCommandV2.INSTANCE.stopSearchBtDevice();
@@ -299,11 +394,13 @@ public class YanqiangVoiceModule extends ReactContextBaseJavaModule {
           ServiceSdkCommandV2.INSTANCE.connect(macAddress);
           promise.resolve(true);
         } catch (Throwable error) {
+          connectionInProgress = false;
           Log.e(TAG, "connect failed", error);
           promise.reject("YANQIANG_CONNECT_FAILED", rootErrorMessage(error), error);
         }
       }, CONNECT_AFTER_SCAN_DELAY_MS);
     } catch (Exception error) {
+      connectionInProgress = false;
       promise.reject("YANQIANG_CONNECT_FAILED", error);
     }
   }
@@ -314,6 +411,12 @@ public class YanqiangVoiceModule extends ReactContextBaseJavaModule {
       ServiceSdkCommandV2.INSTANCE.disconnect(new BCallback() {
         @Override
         public void result(boolean success) {
+          if (success) {
+            vendorConnected = false;
+            connectionInProgress = false;
+            clearPersistedRingMac();
+            RingBackgroundSyncService.stop(getReactApplicationContext());
+          }
           promise.resolve(success);
         }
       });
@@ -373,15 +476,94 @@ public class YanqiangVoiceModule extends ReactContextBaseJavaModule {
   }
 
   @ReactMethod
-  public synchronized void syncVoiceRecordings(Promise promise) {
+  public void syncVoiceRecordings(Promise promise) {
+    syncVoiceRecordingsInternal(promise);
+  }
+
+  @ReactMethod
+  public void getRingDictationStatus(Promise promise) {
+    Context context = getReactApplicationContext();
+    WritableMap body = Arguments.createMap();
+    body.putBoolean("accessibilityEnabled",
+        RingDictationAccessibilityService.isServiceEnabled(context));
+    body.putBoolean("microphoneGranted",
+        context.checkSelfPermission(Manifest.permission.RECORD_AUDIO) ==
+            PackageManager.PERMISSION_GRANTED);
+    body.putBoolean("listening", RingDictationAccessibilityService.isListening());
+    promise.resolve(body);
+  }
+
+  @ReactMethod
+  public void openRingDictationSettings(Promise promise) {
+    try {
+      Intent intent = new Intent(Settings.ACTION_ACCESSIBILITY_SETTINGS);
+      intent.addFlags(Intent.FLAG_ACTIVITY_NEW_TASK);
+      getReactApplicationContext().startActivity(intent);
+      promise.resolve(true);
+    } catch (Throwable error) {
+      promise.reject("RING_DICTATION_SETTINGS_FAILED", rootErrorMessage(error), error);
+    }
+  }
+
+  @ReactMethod
+  public void startRingDictationTest(Promise promise) {
+    promise.resolve(RingDictationAccessibilityService.startFromRing());
+  }
+
+  @ReactMethod
+  public void stopRingDictationTest(Promise promise) {
+    promise.resolve(RingDictationAccessibilityService.stopFromRing());
+  }
+
+  @ReactMethod
+  public void completeRingDictation(String text, Promise promise) {
+    promise.resolve(RingDictationAccessibilityService.completeFromSpur(text));
+  }
+
+  @ReactMethod
+  public void failRingDictation(String message, Promise promise) {
+    promise.resolve(RingDictationAccessibilityService.failFromSpur(message));
+  }
+
+  @ReactMethod
+  public void updateRingDictationPartial(String text, Promise promise) {
+    promise.resolve(RingDictationAccessibilityService.updatePartialFromSpur(text));
+  }
+
+  @ReactMethod
+  public void getElevenLabsApiKey(String packagedKey, Promise promise) {
+    String seed = packagedKey == null ? "" : packagedKey.trim();
+    SharedPreferences preferences = getPreferences();
+    String stored = preferences.getString(PREF_ELEVENLABS_API_KEY, "");
+    if (!seed.isEmpty() && !seed.equals(stored)) {
+      preferences.edit().putString(PREF_ELEVENLABS_API_KEY, seed).apply();
+      stored = seed;
+    }
+    promise.resolve(stored == null ? "" : stored);
+  }
+
+  @ReactMethod
+  public void resumeBackgroundSync(Promise promise) {
+    try {
+      initializeSdk();
+      boolean hasRing = hasSavedRing(getReactApplicationContext());
+      if (hasRing) RingBackgroundSyncService.start(getReactApplicationContext());
+      promise.resolve(hasRing);
+    } catch (Throwable error) {
+      Log.e(TAG, "resumeBackgroundSync failed", error);
+      promise.reject("YANQIANG_BACKGROUND_SYNC_FAILED", rootErrorMessage(error), error);
+    }
+  }
+
+  private synchronized void syncVoiceRecordingsInternal(@Nullable Promise promise) {
     if (syncInProgress) {
       long inactiveMs = System.currentTimeMillis() - syncLastActivityAt;
       if (syncLastActivityAt > 0 && inactiveMs >= STALE_SYNC_LOCK_MS) {
         Log.w(TAG, "recovering stale recording sync lock inactiveMs=" + inactiveMs);
         syncInProgress = false;
       } else {
-        promise.reject("YANQIANG_RECORDING_SYNC_BUSY",
-            "Voice recording sync is already running (inactive " + inactiveMs + "ms)");
+        rejectSync(promise, "YANQIANG_RECORDING_SYNC_BUSY",
+            "Voice recording sync is already running (inactive " + inactiveMs + "ms)", null);
         return;
       }
     }
@@ -389,8 +571,8 @@ public class YanqiangVoiceModule extends ReactContextBaseJavaModule {
     // Vendor state 4 means that recording data is ready and waiting for the App to upload it.
     // Allow both idle (1) and data-pending (4); block recording/paused/already-uploading states.
     if (currentWorkingState != -1 && currentWorkingState != 1 && currentWorkingState != 4) {
-      promise.reject("YANQIANG_DEVICE_NOT_READY_FOR_SYNC",
-          "Ring cannot sync in workingState=" + currentWorkingState + ". Wait for state=1 or state=4.");
+      rejectSync(promise, "YANQIANG_DEVICE_NOT_READY_FOR_SYNC",
+          "Ring cannot sync in workingState=" + currentWorkingState + ". Wait for state=1 or state=4.", null);
       return;
     }
 
@@ -417,7 +599,7 @@ public class YanqiangVoiceModule extends ReactContextBaseJavaModule {
             }
             WritableMap body = Arguments.createMap();
             body.putArray("files", listLocalRecordingFiles());
-            promise.resolve(body);
+            resolveSync(promise, body);
           }
         }
       };
@@ -427,7 +609,7 @@ public class YanqiangVoiceModule extends ReactContextBaseJavaModule {
           syncInProgress = false;
           syncLastActivityAt = 0L;
           Log.e(TAG, "voice recording sync timed out after " + RECORDING_SYNC_TIMEOUT_MS + "ms");
-          promise.reject("YANQIANG_SYNC_TIMEOUT", "Voice recording sync timed out after 180 seconds");
+          rejectSync(promise, "YANQIANG_SYNC_TIMEOUT", "Voice recording sync timed out after 180 seconds", null);
         }
       };
       timeoutHandler.postDelayed(timeoutTask[0], RECORDING_SYNC_TIMEOUT_MS);
@@ -449,9 +631,9 @@ public class YanqiangVoiceModule extends ReactContextBaseJavaModule {
             timeoutHandler.removeCallbacks(timeoutTask[0]);
             syncInProgress = false;
             syncLastActivityAt = 0L;
-            promise.reject("YANQIANG_SYNC_START_FAILED",
+            rejectSync(promise, "YANQIANG_SYNC_START_FAILED",
                 "Vendor failed to start voice file transfer: code=" + result.getCode()
-                    + " message=" + result.getMessage());
+                    + " message=" + result.getMessage(), null);
           }
         }
 
@@ -513,7 +695,7 @@ public class YanqiangVoiceModule extends ReactContextBaseJavaModule {
     } catch (Exception error) {
       syncInProgress = false;
       syncLastActivityAt = 0L;
-      promise.reject("YANQIANG_SYNC_RECORDING_FAILED", error);
+      rejectSync(promise, "YANQIANG_SYNC_RECORDING_FAILED", rootErrorMessage(error), error);
     }
   }
 
@@ -554,6 +736,75 @@ public class YanqiangVoiceModule extends ReactContextBaseJavaModule {
     }
   }
 
+  private void runBackgroundPoll() {
+    try {
+      initializeSdk();
+      if (!vendorConnected) {
+        String savedMac = getPreferences().getString(PREF_RING_MAC, "");
+        if (savedMac == null || savedMac.isEmpty()) {
+          Log.i(TAG, "background poll stopped: no saved ring");
+          RingBackgroundSyncService.stop(getReactApplicationContext());
+          return;
+        }
+
+        long now = System.currentTimeMillis();
+        if (connectionInProgress || now - lastBackgroundReconnectAt < BACKGROUND_RECONNECT_THROTTLE_MS) {
+          return;
+        }
+        currentMacAddress = savedMac;
+        connectionInProgress = true;
+        lastBackgroundReconnectAt = now;
+        ServiceSdkCommandV2.INSTANCE.removeCallback(connectCallback);
+        ServiceSdkCommandV2.INSTANCE.addCallback(connectCallback);
+        Log.i(TAG, "background reconnect mac=" + savedMac);
+        ServiceSdkCommandV2.INSTANCE.connect(savedMac);
+        return;
+      }
+
+      syncVoiceRecordingsInternal(null);
+    } catch (Throwable error) {
+      connectionInProgress = false;
+      Log.e(TAG, "background poll failed", error);
+    }
+  }
+
+  private SharedPreferences getPreferences() {
+    return getReactApplicationContext().getSharedPreferences(PREFS_NAME, Context.MODE_PRIVATE);
+  }
+
+  private void persistRingMac(@NonNull String macAddress) {
+    getPreferences().edit().putString(PREF_RING_MAC, macAddress).apply();
+  }
+
+  private void clearPersistedRingMac() {
+    getPreferences().edit().remove(PREF_RING_MAC).apply();
+  }
+
+  private void resolveSync(@Nullable Promise promise, @NonNull WritableMap result) {
+    if (promise != null) {
+      promise.resolve(result);
+    } else {
+      Log.i(TAG, "background recording sync completed");
+    }
+  }
+
+  private void rejectSync(
+      @Nullable Promise promise,
+      @NonNull String code,
+      @NonNull String message,
+      @Nullable Throwable error
+  ) {
+    if (promise == null) {
+      Log.w(TAG, "background recording sync skipped/failed: " + code + " " + message, error);
+      return;
+    }
+    if (error != null) {
+      promise.reject(code, message, error);
+    } else {
+      promise.reject(code, message);
+    }
+  }
+
   private synchronized void initializeSdk() {
     if (sdkInitialized) return;
 
@@ -572,6 +823,18 @@ public class YanqiangVoiceModule extends ReactContextBaseJavaModule {
     ServiceSdkCommandV2.INSTANCE.addSmartTouchEventListener(smartTouchEventCallback);
     sdkInitialized = true;
     Log.i(TAG, "initSdk success");
+  }
+
+  private void enableTouchReportingForRingControls() {
+    try {
+      ServiceSdkCommandV2.INSTANCE.setTouchEventReportSwitch(1, new ICallback() {
+        @Override public void result(int result) {
+          Log.i(TAG, "ring control touch reporting result=" + result);
+        }
+      });
+    } catch (Throwable error) {
+      Log.w(TAG, "unable to enable ring control touch reporting", error);
+    }
   }
 
   private String rootErrorMessage(Throwable error) {
@@ -693,10 +956,16 @@ public class YanqiangVoiceModule extends ReactContextBaseJavaModule {
 
   private String mapSmartTouchEvent(int event) {
     switch (event) {
+      case 257:
       case 4353:
         return "single_click";
+      case 258:
       case 4354:
         return "double_click";
+      case 259:
+        return "long_press";
+      case 262:
+        return "release_press";
       case 4355:
         return "volume_up";
       case 4356:

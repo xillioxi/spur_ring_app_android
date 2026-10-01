@@ -12,7 +12,7 @@ import {
 import { transcriptWantsImage } from './imageIntent.js'
 import { polishSpokenIntent } from './voicePolish.js'
 import { rewriteResultFromIntent } from './resultRewrite.js'
-import { transcribeWithSaucBigmodel } from './stt/saucBigmodel.js'
+import { transcribeWithVolcengine } from './stt/volcengine.js'
 import { isAssistantSkill, refineWithSkill } from './skillRefine.js'
 import { DEFAULT_AUDIO_TASK_TYPE, isAudioTaskType } from './taskPrompts.js'
 import { createReportPage } from './report.js'
@@ -29,7 +29,7 @@ import {
   saveRecording,
   updateRecording,
 } from './storage.js'
-import { transcribeAudio } from './stt/index.js'
+import { transcribeAudio, transcribeAudioDetailed } from './stt/index.js'
 
 const config = getConfig()
 const webRoot = join(config.appRoot, 'src/web')
@@ -433,11 +433,14 @@ async function handleAssistantVoiceIntent(request: Request): Promise<Response> {
     const uploadPath = join(uploadsDir, `${id}${getAudioExtension(audio)}`)
     await writeFile(uploadPath, Buffer.from(await audio.arrayBuffer()))
 
-    // 悬浮窗：大模型流式 STT（sauc/bigmodel）→ 文字意图，不做 Typeless 清洗，不做 S2S。
-    const transcript = await transcribeWithSaucBigmodel({
+    // Cursor dictation is latency-sensitive. Use the one-shot Volcengine ASR 2.0
+    // BigModel Flash endpoint instead of converting to PCM and replaying the file
+    // through SAUC WebSocket after the user has already released the ring.
+    const transcript = await transcribeWithVolcengine({
       config,
       filePath: uploadPath,
       mimeType: audio.type || 'audio/webm',
+      preferFlash: true,
     })
     const intent = transcript.trim()
     if (!intent) {
@@ -448,7 +451,8 @@ async function handleAssistantVoiceIntent(request: Request): Promise<Response> {
       id,
       transcript: intent,
       intent,
-      provider: 'volc.sauc.bigmodel',
+      provider: 'volc.auc.bigmodel.flash',
+      model: 'bigmodel',
     })
   } catch (error) {
     return jsonError(error, 'Voice intent failed')
@@ -660,11 +664,13 @@ async function handleAudioTask(request: Request): Promise<Response> {
 
     await writeFile(uploadPath, Buffer.from(await audio.arrayBuffer()))
 
-    const transcript = await transcribeAudio({
+    const transcription = await transcribeAudioDetailed({
       filePath: uploadPath,
       mimeType: audio.type || 'audio/webm',
       config,
+      diarize: taskType === 'recording_summary',
     })
+    const transcript = transcription.text
     await writeFile(transcriptPath, transcript)
 
     const wantsImage =
@@ -696,6 +702,13 @@ async function handleAudioTask(request: Request): Promise<Response> {
       id,
       taskType,
       transcript,
+      transcriptSegments: transcription.segments,
+      transcription: {
+        provider: transcription.provider,
+        model: transcription.model,
+        languageCode: transcription.languageCode,
+        languageProbability: transcription.languageProbability,
+      },
       transcriptPath,
       agent,
       report,

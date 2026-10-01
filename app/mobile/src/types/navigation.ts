@@ -1,5 +1,8 @@
 export type RootStackParamList = {
   MainTabs: undefined;
+  Sync: undefined;
+  LegacyUI: undefined;
+  ReferenceUI: undefined;
   Device: undefined;
   ConnectLaptop: undefined;
   CloudOffice: undefined;
@@ -12,6 +15,7 @@ export type RootStackParamList = {
 };
 
 export type MainTabParamList = {
+  Home: undefined;
   Records: undefined;
-  Assistant: undefined;
+  Assistants: undefined;
 };

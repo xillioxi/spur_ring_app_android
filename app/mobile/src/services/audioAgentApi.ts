@@ -3,11 +3,26 @@ import { assertAudioAgentHttpsForRelease, AUDIO_AGENT_BASE_URL } from '@/config/
 export type AudioAgentResult = {
   id: string;
   transcript: string;
+  transcriptSegments?: AudioTranscriptSegment[];
+  transcription?: {
+    provider: string;
+    model?: string;
+    languageCode?: string;
+    languageProbability?: number;
+  };
   agent: {
     output: string;
     exitCode: number;
     imageUrl?: string;
   };
+};
+
+export type AudioTranscriptSegment = {
+  speakerId: string;
+  speakerName: string;
+  start: number;
+  end: number;
+  text: string;
 };
 
 export type AudioTaskType = 'recording_summary' | 'agent_command' | 'agent_image';
@@ -81,6 +96,7 @@ function isAudioAgentResult(value: unknown): value is AudioAgentResult {
   return (
     typeof result.id === 'string' &&
     typeof result.transcript === 'string' &&
+    (result.transcriptSegments === undefined || Array.isArray(result.transcriptSegments)) &&
     !!result.agent &&
     typeof result.agent.output === 'string' &&
     typeof result.agent.exitCode === 'number' &&

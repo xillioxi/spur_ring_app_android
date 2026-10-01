@@ -1,8 +1,8 @@
 import { assertAudioAgentHttpsForRelease, AUDIO_AGENT_BASE_URL } from '@/config/api';
 
 /**
- * 悬浮窗听写：云端大模型流式 STT（sauc/bigmodel）→ 文字意图。
- * 不做 Typeless 清洗；不是 S2S。
+ * Compatibility fallback for older Android builds that upload a completed file.
+ * Current Ring dictation uses ElevenLabs Scribe v2 Realtime while the button is held.
  */
 export async function captureVoiceIntent(input: {
   uri: string;
@@ -20,7 +20,7 @@ export async function captureVoiceIntent(input: {
   const payload = await postJsonOrForm(`${AUDIO_AGENT_BASE_URL}/api/assistant/voice-intent`, {
     method: 'POST',
     body,
-    timeoutMs: 180_000
+    timeoutMs: 30_000
   });
   const record = payload as { transcript?: unknown; intent?: unknown };
   const intent =

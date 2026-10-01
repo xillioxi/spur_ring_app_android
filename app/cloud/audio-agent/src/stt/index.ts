@@ -1,21 +1,36 @@
-import type { AudioAgentConfig } from '../config.js'
 import { transcribeWithMock } from './mock.js'
 import { transcribeWithVolcengine } from './volcengine.js'
+import { transcribeWithElevenLabs } from './elevenlabs.js'
+import type { TranscribeInput, TranscriptionResult } from './types.js'
 
-export type TranscribeInput = {
-  filePath: string
-  mimeType: string
-  config: AudioAgentConfig
-  /** Short dictation: try Volcengine flash (base64) before submit/query URL flow. */
-  preferFlash?: boolean
-}
+export type {
+  TranscriptSegment,
+  TranscribeInput,
+  TranscriptionResult,
+} from './types.js'
 
 export async function transcribeAudio(input: TranscribeInput): Promise<string> {
+  return (await transcribeAudioDetailed(input)).text
+}
+
+export async function transcribeAudioDetailed(
+  input: TranscribeInput,
+): Promise<TranscriptionResult> {
   switch (input.config.sttProvider) {
     case 'mock':
-      return transcribeWithMock(input)
+      return {
+        text: await transcribeWithMock(input),
+        segments: [],
+        provider: 'mock',
+      }
     case 'volcengine':
-      return transcribeWithVolcengine(input)
+      return {
+        text: await transcribeWithVolcengine(input),
+        segments: [],
+        provider: 'volcengine',
+      }
+    case 'elevenlabs':
+      return transcribeWithElevenLabs(input)
     default:
       throw new Error(`Unsupported STT provider: ${input.config.sttProvider}`)
   }

@@ -1,6 +1,6 @@
 import { useCallback, useEffect, useState } from 'react';
 import { Alert, PermissionsAndroid, Platform, Pressable, StyleSheet, Text, View } from 'react-native';
-import { Bluetooth, ChevronLeft, ChevronRight, Link2, Radio, Unlink } from 'lucide-react-native';
+import { AudioLines, Bluetooth, ChevronLeft, ChevronRight, Link2, Radio, Unlink } from 'lucide-react-native';
 import { useFocusEffect, useNavigation } from '@react-navigation/native';
 import type { NativeStackNavigationProp } from '@react-navigation/native-stack';
 
@@ -34,6 +34,7 @@ export function YanqiangVoiceDebugScreen() {
   const [devices, setDevices] = useState<Record<string, ScanDevice>>(cached.devices);
   const [connectionState, setConnectionState] = useState<ConnectionState>(cached.connectionState);
   const [connectedMac, setConnectedMac] = useState<string | null>(cached.connectedMac);
+  const [dictationEnabled, setDictationEnabled] = useState(false);
 
   const pushLog = useCallback((text: string) => {
     console.log('[YanqiangVoiceDebug]', text);
@@ -49,6 +50,11 @@ export function YanqiangVoiceDebugScreen() {
       setConnectedMac(session.connectedMac);
       if (session.connectionState === 'connected' && session.connectedMac) {
         pushLog(`ui-restore: connected ${session.connectedMac}`);
+      }
+      if (Platform.OS === 'android' && YanqiangVoiceNative.isAvailable) {
+        void YanqiangVoiceNative.getRingDictationStatus()
+          .then((status) => setDictationEnabled(status.accessibilityEnabled))
+          .catch(() => setDictationEnabled(false));
       }
     }, [pushLog])
   );
@@ -135,6 +141,9 @@ export function YanqiangVoiceDebugScreen() {
         PermissionsAndroid.PERMISSIONS.BLUETOOTH_CONNECT,
         PermissionsAndroid.PERMISSIONS.ACCESS_FINE_LOCATION
       ]);
+      if (Number(Platform.Version) >= 33) {
+        await PermissionsAndroid.request(PermissionsAndroid.PERMISSIONS.POST_NOTIFICATIONS);
+      }
       return (
         result[PermissionsAndroid.PERMISSIONS.BLUETOOTH_SCAN] === PermissionsAndroid.RESULTS.GRANTED &&
         result[PermissionsAndroid.PERMISSIONS.BLUETOOTH_CONNECT] === PermissionsAndroid.RESULTS.GRANTED
@@ -144,6 +153,25 @@ export function YanqiangVoiceDebugScreen() {
       (await PermissionsAndroid.request(PermissionsAndroid.PERMISSIONS.ACCESS_FINE_LOCATION)) ===
       PermissionsAndroid.RESULTS.GRANTED
     );
+  }
+
+  async function setupRingDictation() {
+    if (Platform.OS !== 'android') return;
+    const permission = await PermissionsAndroid.request(PermissionsAndroid.PERMISSIONS.RECORD_AUDIO);
+    if (permission !== PermissionsAndroid.RESULTS.GRANTED) {
+      Alert.alert(t.device.dictationPermissionTitle, t.device.dictationPermissionMessage);
+      return;
+    }
+    const status = await YanqiangVoiceNative.getRingDictationStatus();
+    if (status.accessibilityEnabled) {
+      Alert.alert(t.device.dictationReadyTitle, t.device.dictationReadyMessage, [
+        { text: t.common.cancel, style: 'cancel' },
+        { text: t.device.dictationSettings, onPress: () => void YanqiangVoiceNative.openRingDictationSettings() }
+      ]);
+      setDictationEnabled(true);
+      return;
+    }
+    await YanqiangVoiceNative.openRingDictationSettings();
   }
 
   async function initialize() {
@@ -304,6 +332,18 @@ export function YanqiangVoiceDebugScreen() {
       {connectionState === 'connected' && connectedMac ? (
         <View style={styles.section}>
           <Text style={styles.sectionTitle}>{t.device.tools}</Text>
+          {Platform.OS === 'android' ? (
+            <Pressable style={styles.row} onPress={() => void setupRingDictation()}>
+              <AudioLines color={dictationEnabled ? colors.success : colors.text} size={20} />
+              <View style={styles.flex}>
+                <Text style={styles.rowLabel}>{t.device.ringDictation}</Text>
+                <Text style={styles.rowHint}>
+                  {dictationEnabled ? t.device.ringDictationReady : t.device.ringDictationSetup}
+                </Text>
+              </View>
+              <ChevronRight color={colors.textTertiary} size={18} />
+            </Pressable>
+          ) : null}
           <Pressable
             style={styles.row}
             onPress={() => navigation.navigate('YanqiangRecordingDebug', { macAddress: connectedMac })}

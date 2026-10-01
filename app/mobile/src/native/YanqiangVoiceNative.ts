@@ -28,13 +28,40 @@ type VoiceRecordParamResult = {
   }
 }
 
+type RingDictationStatus = {
+  accessibilityEnabled: boolean
+  microphoneGranted: boolean
+  listening: boolean
+}
+
+type RingDictationAudio = {
+  uri: string
+  name: string
+  size: number
+}
+
+type RingDictationStreamEvent = {
+  type: 'start' | 'chunk' | 'commit' | 'error'
+  sampleRate: number
+  audioBase64?: string
+}
+
 type YanqiangVoiceNativeModule = {
   initSdk(): Promise<boolean>
+  resumeBackgroundSync?(): Promise<boolean>
   startScan(): Promise<boolean>
   stopScan(): void
   connect(macAddress: string): Promise<boolean>
   disconnect(): Promise<boolean>
   setTouchEventReporting(enabled: boolean): Promise<{ enabled: boolean; result: number }>
+  getRingDictationStatus(): Promise<RingDictationStatus>
+  openRingDictationSettings(): Promise<boolean>
+  startRingDictationTest(): Promise<boolean>
+  stopRingDictationTest(): Promise<boolean>
+  completeRingDictation(text: string): Promise<boolean>
+  failRingDictation(message: string): Promise<boolean>
+  updateRingDictationPartial(text: string): Promise<boolean>
+  getElevenLabsApiKey(packagedKey: string): Promise<string>
   queryVoiceRecordingSummary(): Promise<RecordingSummary>
   syncVoiceRecordings(): Promise<{ files: NativeFile[] }>
   getVoiceRecordParam(): Promise<VoiceRecordParamResult>
@@ -50,11 +77,22 @@ const native = NativeModules.YanqiangVoiceModule as YanqiangVoiceNativeModule | 
 export const YanqiangVoiceNative = {
   isAvailable: (Platform.OS === 'android' || Platform.OS === 'ios') && !!native,
   initSdk: () => requireNative().initSdk(),
+  resumeBackgroundSync: () => native?.resumeBackgroundSync?.() ?? Promise.resolve(false),
   startScan: () => requireNative().startScan(),
   stopScan: () => requireNative().stopScan(),
   connect: (macAddress: string) => requireNative().connect(macAddress),
   disconnect: () => requireNative().disconnect(),
   setTouchEventReporting: (enabled: boolean) => requireNative().setTouchEventReporting(enabled),
+  getRingDictationStatus: () => requireNative().getRingDictationStatus(),
+  openRingDictationSettings: () => requireNative().openRingDictationSettings(),
+  startRingDictationTest: () => requireNative().startRingDictationTest(),
+  stopRingDictationTest: () => requireNative().stopRingDictationTest(),
+  completeRingDictation: (text: string) => requireNative().completeRingDictation(text),
+  failRingDictation: (message: string) => requireNative().failRingDictation(message),
+  updateRingDictationPartial: (text: string) =>
+    requireNative().updateRingDictationPartial(text),
+  getElevenLabsApiKey: (packagedKey: string) =>
+    requireNative().getElevenLabsApiKey(packagedKey),
   queryVoiceRecordingSummary: () => requireNative().queryVoiceRecordingSummary(),
   syncVoiceRecordings: () => requireNative().syncVoiceRecordings(),
   getVoiceRecordParam: () => requireNative().getVoiceRecordParam(),
@@ -73,6 +111,8 @@ export const YanqiangVoiceEventNames = {
   fileReady: 'yanqiangVoiceFileReady',
   error: 'yanqiangVoiceError',
   touch: 'yanqiangSmartTouchEvent',
+  dictationAudio: 'yanqiangDictationAudioReady',
+  dictationStream: 'yanqiangDictationStream',
 } as const
 
 function requireNative(): YanqiangVoiceNativeModule {
@@ -82,4 +122,11 @@ function requireNative(): YanqiangVoiceNativeModule {
   return native
 }
 
-export type { NativeFile, RecordingSummary, VoiceRecordParamResult }
+export type {
+  NativeFile,
+  RecordingSummary,
+  RingDictationAudio,
+  RingDictationStreamEvent,
+  RingDictationStatus,
+  VoiceRecordParamResult,
+}
