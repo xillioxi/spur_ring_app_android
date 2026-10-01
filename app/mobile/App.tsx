@@ -57,7 +57,7 @@ export default function App() {
     <GestureHandlerRootView style={{ flex: 1 }}>
       <SafeAreaProvider>
         <NavigationContainer>
-          <StatusBar style="dark" backgroundColor={colors.background} />
+          <StatusBar style="light" backgroundColor={colors.background} />
           <AppNavigator />
         </NavigationContainer>
       </SafeAreaProvider>

@@ -119,8 +119,8 @@ android {
         targetSdkVersion rootProject.ext.targetSdkVersion
         // Always increment this for install-in-place test APKs. Reusing a version code
         // encourages uninstall/reinstall flows, which erase app-private recordings.
-        versionCode 9
-        versionName "1.0.7"
+        versionCode 10
+        versionName "1.0.8"
         buildConfigField "String", "REACT_NATIVE_RELEASE_LEVEL", "\"${findProperty('reactNativeReleaseLevel') ?: 'stable'}\""
     }
     signingConfigs {

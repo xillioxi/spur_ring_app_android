@@ -121,7 +121,7 @@ const styles = StyleSheet.create({
   cardTitle: { color: colors.text, fontSize: 15, fontWeight: '800' },
   detail: { color: colors.textSecondary, fontSize: 12, marginTop: 4 },
   actions: { flexDirection: 'row', gap: 10, marginTop: 15 },
-  primaryButton: { flex: 1, backgroundColor: colors.text, borderRadius: 12, padding: 12, alignItems: 'center' },
+  primaryButton: { flex: 1, backgroundColor: colors.primary, borderRadius: 12, padding: 12, alignItems: 'center' },
   primaryText: { color: '#fff', fontWeight: '800' },
   secondaryButton: { flex: 1, borderWidth: 1, borderColor: colors.border, borderRadius: 12, padding: 12, alignItems: 'center', backgroundColor: colors.card },
   secondaryText: { color: colors.text, fontWeight: '800' },

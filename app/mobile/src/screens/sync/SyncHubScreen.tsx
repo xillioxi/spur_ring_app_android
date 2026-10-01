@@ -45,8 +45,8 @@ export function SyncHubScreen() {
       </Pressable>
 
       <View style={styles.note}>
-        <Text style={styles.noteTitle}>Design handoff</Text>
-        <Text style={styles.noteText}>This page intentionally keeps the sync workflow simple while preserving every existing device, recording-transfer, dictation, and laptop connection tool.</Text>
+        <Text style={styles.noteTitle}>Automatic sync</Text>
+        <Text style={styles.noteText}>Keep your ring near your phone with Bluetooth enabled. New captures appear in Notes and Processes after transfer.</Text>
       </View>
     </AppScreen>
   );
@@ -62,13 +62,13 @@ const styles = StyleSheet.create({
   heroTitle: { color: '#ffffff', fontSize: 23, fontWeight: '900' },
   heroText: { color: '#a8b4c7', fontSize: 13, lineHeight: 20, marginTop: 8 },
   eyebrow: { color: colors.textTertiary, fontSize: 10, fontWeight: '900', letterSpacing: 1.4, marginBottom: 9, marginLeft: 3 },
-  row: { minHeight: 82, flexDirection: 'row', alignItems: 'center', gap: 13, borderRadius: 20, padding: 14, backgroundColor: '#ffffff', borderWidth: 1, borderColor: colors.border, marginBottom: 11 },
+  row: { minHeight: 82, flexDirection: 'row', alignItems: 'center', gap: 13, borderRadius: 20, padding: 14, backgroundColor: colors.card, borderWidth: 1, borderColor: colors.border, marginBottom: 11 },
   rowIcon: { width: 44, height: 44, borderRadius: 15, alignItems: 'center', justifyContent: 'center' },
-  ringIcon: { backgroundColor: '#edf2ff' },
-  laptopIcon: { backgroundColor: '#f2edff' },
+  ringIcon: { backgroundColor: '#203248' },
+  laptopIcon: { backgroundColor: '#302544' },
   rowTitle: { color: colors.text, fontSize: 15, fontWeight: '900' },
   rowText: { color: colors.textSecondary, fontSize: 11, lineHeight: 16, marginTop: 3 },
-  note: { padding: 16, borderRadius: 18, backgroundColor: '#f5f7fa', marginTop: 12 },
+  note: { padding: 16, borderRadius: 18, backgroundColor: colors.card, marginTop: 12 },
   noteTitle: { color: colors.text, fontSize: 13, fontWeight: '900' },
   noteText: { color: colors.textSecondary, fontSize: 11, lineHeight: 17, marginTop: 5 }
 });

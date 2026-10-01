@@ -59,7 +59,7 @@ type NoteChatMessage = {
 
 export function LocalRecordingResultScreen({ route }: Props) {
   const [record, setRecord] = useState<LocalRecordingAnalysis | null | undefined>(undefined);
-  const [tab, setTab] = useState<ResultTab>('notes');
+  const [tab, setTab] = useState<ResultTab>(route.params.tab || 'notes');
   const [messages, setMessages] = useState<NoteChatMessage[]>([]);
   const [asking, setAsking] = useState(false);
   const [activeSummaryId, setActiveSummaryId] = useState('original-meeting-notes');
@@ -544,15 +544,15 @@ const styles = StyleSheet.create({
   headerCard: { marginTop: 14, padding: 18, borderRadius: 20, backgroundColor: colors.card, borderWidth: 1, borderColor: colors.border },
   title: { color: colors.text, fontSize: 23, fontWeight: '800' },
   meta: { color: colors.textSecondary, fontSize: 12, marginTop: 8 },
-  tabs: { flexDirection: 'row', padding: 4, marginTop: 16, borderRadius: 14, backgroundColor: '#f3f3f3', borderWidth: 1, borderColor: colors.border },
+  tabs: { flexDirection: 'row', padding: 4, marginTop: 16, borderRadius: 14, backgroundColor: colors.cardSoft, borderWidth: 1, borderColor: colors.border },
   tab: { flex: 1, minHeight: 42, alignItems: 'center', justifyContent: 'center', borderRadius: 11 },
-  tabActive: { backgroundColor: colors.text },
+  tabActive: { backgroundColor: colors.primary },
   tabText: { color: colors.textSecondary, fontSize: 13, fontWeight: '800' },
   tabTextActive: { color: '#fff' },
   summaryTabsRow: { marginTop: 12, marginHorizontal: -2 },
   summaryTabsContent: { gap: 7, paddingHorizontal: 2, paddingVertical: 2 },
   summaryTab: { maxWidth: 180, minHeight: 38, justifyContent: 'center', paddingHorizontal: 14, borderRadius: 12, backgroundColor: colors.cardSoft, borderWidth: 1, borderColor: colors.border },
-  summaryTabActive: { backgroundColor: colors.text, borderColor: colors.text },
+  summaryTabActive: { backgroundColor: colors.primary, borderColor: colors.primary },
   summaryTabText: { color: colors.textSecondary, fontSize: 12, fontWeight: '800' },
   summaryTabTextActive: { color: '#fff' },
   addSummaryButton: { width: 40, height: 38, alignItems: 'center', justifyContent: 'center', borderRadius: 12, backgroundColor: colors.card, borderWidth: 1, borderColor: colors.border },
@@ -577,7 +577,7 @@ const styles = StyleSheet.create({
   userBubble: {
     alignSelf: 'flex-end',
     maxWidth: '88%',
-    backgroundColor: colors.text,
+    backgroundColor: colors.primary,
     borderRadius: 16,
     borderBottomRightRadius: 6,
     paddingHorizontal: 14,
@@ -587,7 +587,7 @@ const styles = StyleSheet.create({
   assistantBubble: {
     alignSelf: 'flex-start',
     maxWidth: '92%',
-    backgroundColor: '#f3f3f3',
+    backgroundColor: colors.cardSoft,
     borderRadius: 16,
     borderBottomLeftRadius: 6,
     paddingHorizontal: 14,
@@ -609,7 +609,7 @@ const styles = StyleSheet.create({
   closeButton: { width: 38, height: 38, borderRadius: 19, alignItems: 'center', justifyContent: 'center', backgroundColor: colors.cardSoft },
   modeGrid: { flexDirection: 'row', gap: 10, marginBottom: 20 },
   modeCard: { flex: 1, minHeight: 112, padding: 14, borderRadius: 16, backgroundColor: colors.cardSoft, borderWidth: 1, borderColor: colors.border },
-  modeCardActive: { backgroundColor: colors.text, borderColor: colors.text },
+  modeCardActive: { backgroundColor: colors.primary, borderColor: colors.primary },
   modeCardTitleRow: { flexDirection: 'row', alignItems: 'center', justifyContent: 'space-between', gap: 6 },
   modeCardTitle: { flex: 1, color: colors.text, fontSize: 14, fontWeight: '900' },
   modeCardTitleActive: { color: '#fff' },
@@ -618,12 +618,12 @@ const styles = StyleSheet.create({
   controlLabel: { color: colors.text, fontSize: 13, fontWeight: '900', marginBottom: 10 },
   categoryRow: { gap: 7, paddingBottom: 13 },
   filterChip: { minHeight: 35, justifyContent: 'center', paddingHorizontal: 12, borderRadius: 11, backgroundColor: colors.cardSoft, borderWidth: 1, borderColor: colors.border },
-  filterChipActive: { backgroundColor: colors.text, borderColor: colors.text },
+  filterChipActive: { backgroundColor: colors.primary, borderColor: colors.primary },
   filterChipText: { color: colors.textSecondary, fontSize: 11, fontWeight: '800' },
   filterChipTextActive: { color: '#fff' },
   templateGrid: { gap: 9, marginBottom: 12 },
   templateCard: { padding: 14, borderRadius: 15, backgroundColor: colors.card, borderWidth: 1, borderColor: colors.border },
-  templateCardActive: { backgroundColor: colors.text, borderColor: colors.text },
+  templateCardActive: { backgroundColor: colors.primary, borderColor: colors.primary },
   templateCardHeader: { flexDirection: 'row', alignItems: 'center', justifyContent: 'space-between', gap: 8 },
   templateName: { flex: 1, color: colors.text, fontSize: 14, fontWeight: '900' },
   templateNameActive: { color: '#fff' },
@@ -632,7 +632,7 @@ const styles = StyleSheet.create({
   customToggle: { flexDirection: 'row', alignItems: 'center', gap: 10, paddingVertical: 11, marginBottom: 8 },
   customToggleActive: { opacity: 1 },
   checkbox: { width: 22, height: 22, alignItems: 'center', justifyContent: 'center', borderRadius: 7, borderWidth: 1, borderColor: colors.border, backgroundColor: colors.card },
-  checkboxActive: { backgroundColor: colors.text, borderColor: colors.text },
+  checkboxActive: { backgroundColor: colors.primary, borderColor: colors.primary },
   customToggleText: { color: colors.text, fontSize: 13, fontWeight: '800' },
   customInputWrap: { marginBottom: 16 },
   customInput: { minHeight: 112, paddingHorizontal: 14, paddingVertical: 12, borderRadius: 15, borderWidth: 1, borderColor: colors.border, backgroundColor: colors.cardSoft, color: colors.text, fontSize: 13, lineHeight: 19, textAlignVertical: 'top' },
@@ -642,12 +642,12 @@ const styles = StyleSheet.create({
   speakerControlTitle: { color: colors.text, fontSize: 13, fontWeight: '900' },
   speakerControlHint: { color: colors.textSecondary, fontSize: 11, lineHeight: 16, marginTop: 4 },
   switchTrack: { width: 45, height: 27, padding: 3, justifyContent: 'center', borderRadius: 14, backgroundColor: '#d6d6d9' },
-  switchTrackActive: { backgroundColor: colors.text },
+  switchTrackActive: { backgroundColor: colors.primary },
   switchThumb: { width: 21, height: 21, borderRadius: 11, backgroundColor: '#fff' },
   switchThumbActive: { alignSelf: 'flex-end' },
   generationError: { color: colors.danger, fontSize: 12, lineHeight: 18, marginTop: 12 },
   sheetBottomSpace: { height: 18 },
-  generateButton: { minHeight: 52, flexDirection: 'row', alignItems: 'center', justifyContent: 'center', gap: 9, borderRadius: 16, backgroundColor: colors.text },
+  generateButton: { minHeight: 52, flexDirection: 'row', alignItems: 'center', justifyContent: 'center', gap: 9, borderRadius: 16, backgroundColor: colors.primary },
   generateButtonDisabled: { opacity: 0.6 },
   generateButtonText: { color: '#fff', fontSize: 14, fontWeight: '900' },
   emptyCard: { marginTop: 20, padding: 24, borderRadius: 20, backgroundColor: colors.card, borderWidth: 1, borderColor: colors.border },

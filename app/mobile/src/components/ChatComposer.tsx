@@ -68,7 +68,7 @@ const styles = StyleSheet.create({
     borderRadius: 21,
     alignItems: 'center',
     justifyContent: 'center',
-    backgroundColor: colors.text
+    backgroundColor: colors.primary
   },
   disabled: {
     opacity: 0.7

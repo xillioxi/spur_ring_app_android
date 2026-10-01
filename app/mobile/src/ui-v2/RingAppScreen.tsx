@@ -1,19 +1,22 @@
-import { useCallback, useMemo, useState } from 'react';
+import { useCallback, useEffect, useMemo, useRef, useState } from 'react';
 import {
-  Alert, ImageBackground, Pressable, ScrollView, StyleSheet, Text, TextInput, View
+  Alert, BackHandler, DeviceEventEmitter, Image, ImageBackground, Modal, Pressable,
+  ScrollView, Share, StyleSheet, Text, TextInput, View
 } from 'react-native';
 import { useFocusEffect, useNavigation } from '@react-navigation/native';
 import { StatusBar } from 'expo-status-bar';
+import { Audio, type AVPlaybackStatus } from 'expo-av';
 import {
   ArrowLeft, ArrowRight, BatteryMedium,
-  ChevronRight, FileText, Grid2X2, Home, Menu, Mic2, PenLine,
-  Plus, Search, Settings2, Share2, Sparkles
+  ChevronRight, FileText, Heart, Home, Menu, Mic2, Pause, PenLine,
+  Play, Plus, RefreshCw, Search, Settings2, Share2, Sparkles, Trash2, X
 } from 'lucide-react-native';
 
-import { listLocalAudioFiles, type LocalAudioFile } from '@/services/localAudioLibrary';
-import { listRecordingAnalyses, processLocalRecording, type LocalRecordingAnalysis } from '@/services/localRecordingAnalysis';
-import { processAgentCard, syncLocalAgentCards, type LocalAgentCard } from '@/services/localAgentCards';
-import { inferOfficeKind, startOfficeJob } from '@/services/officeJob';
+import { deleteLocalAudioFile, listLocalAudioFiles, preparePlayback, type LocalAudioFile } from '@/services/localAudioLibrary';
+import { AgentSkillPanel } from '@/components/AgentSkillPanel';
+import { deleteRecordingAnalysis, listRecordingAnalyses, processLocalRecording, type LocalRecordingAnalysis } from '@/services/localRecordingAnalysis';
+import { deleteAgentCard, processAgentCard, syncLocalAgentCards, toggleAgentCardFavorite, type LocalAgentCard } from '@/services/localAgentCards';
+import { cancelOfficeJob, inferOfficeKind, OFFICE_JOB_EVENT, openCardOffice, startOfficeJob } from '@/services/officeJob';
 import { getRingUiSession } from '@/services/ringConnectionSession';
 import { titleFromMeetingNotes } from '@/utils/meetingNotesTitle';
 
@@ -31,7 +34,7 @@ const violet = '#b438e8';
 const red = '#ed5260';
 const hero = require('../../assets/ui-v2/ring-hero.webp');
 
-export function ReferenceUI() {
+export function RingAppScreen() {
   const navigation = useNavigation<any>();
   const [tab, setTab] = useState<Tab>('home');
   const [selected, setSelected] = useState<Selected>(null);
@@ -44,6 +47,10 @@ export function ReferenceUI() {
   const [noteFilter, setNoteFilter] = useState<NoteFilter>('All');
   const [processFilter, setProcessFilter] = useState<ProcessFilter>('In progress');
   const [busy, setBusy] = useState(false);
+  const [menuOpen, setMenuOpen] = useState(false);
+  const [playingUri, setPlayingUri] = useState<string | null>(null);
+  const [isPlaying, setIsPlaying] = useState(false);
+  const soundRef = useRef<Audio.Sound | null>(null);
 
   const refresh = useCallback(async () => {
     try {
@@ -59,6 +66,19 @@ export function ReferenceUI() {
     }
   }, []);
   useFocusEffect(useCallback(() => { void refresh(); }, [refresh]));
+  useEffect(() => {
+    const officeSub = DeviceEventEmitter.addListener(OFFICE_JOB_EVENT, (updated: LocalAgentCard) => {
+      setCards((current) => current.map((card) => card.id === updated.id ? updated : card));
+    });
+    const backSub = BackHandler.addEventListener('hardwareBackPress', () => {
+      if (menuOpen) { setMenuOpen(false); return true; }
+      if (selected) { setSelected(null); return true; }
+      if (tab !== 'home') { setTab('home'); return true; }
+      return false;
+    });
+    return () => { officeSub.remove(); backSub.remove(); };
+  }, [menuOpen, selected, tab]);
+  useEffect(() => () => { if (soundRef.current) void soundRef.current.unloadAsync(); }, []);
 
   const readyNotes = files.filter((file) => analyses[file.id]?.status === 'completed');
   const finishedProcesses = cards.filter((card) => card.status === 'completed');
@@ -99,7 +119,71 @@ export function ReferenceUI() {
       await refresh();
     } finally { setBusy(false); }
   };
-  const changeTab = (next: Tab) => { setSelected(null); setTab(next); setQuery(''); setSearching(false); };
+  const togglePlayback = async (uri: string) => {
+    try {
+      await preparePlayback();
+      if (soundRef.current && playingUri === uri) {
+        const status = await soundRef.current.getStatusAsync();
+        if (status.isLoaded && status.isPlaying) await soundRef.current.pauseAsync();
+        else await soundRef.current.playAsync();
+        return;
+      }
+      if (soundRef.current) await soundRef.current.unloadAsync();
+      const created = await Audio.Sound.createAsync({ uri }, { shouldPlay: true }, (status: AVPlaybackStatus) => {
+        if (!status.isLoaded) return;
+        setIsPlaying(status.isPlaying);
+        if (status.didJustFinish) { setPlayingUri(null); setIsPlaying(false); }
+      });
+      soundRef.current = created.sound;
+      setPlayingUri(uri);
+      setIsPlaying(true);
+    } catch (error) {
+      Alert.alert('Playback unavailable', error instanceof Error ? error.message : String(error));
+    }
+  };
+  const removeNote = (file: LocalAudioFile) => Alert.alert('Delete recording?', 'This removes the audio and its notes from this device.', [
+    { text: 'Cancel', style: 'cancel' },
+    { text: 'Delete', style: 'destructive', onPress: () => void (async () => {
+      if (playingUri === file.uri && soundRef.current) { await soundRef.current.unloadAsync(); soundRef.current = null; setPlayingUri(null); }
+      await deleteLocalAudioFile(file.uri);
+      await deleteRecordingAnalysis(file.id);
+      setSelected(null);
+      await refresh();
+    })() }
+  ]);
+  const removeCard = (card: LocalAgentCard) => Alert.alert('Delete capture?', 'This removes the capture and its process from this device.', [
+    { text: 'Cancel', style: 'cancel' },
+    { text: 'Delete', style: 'destructive', onPress: () => void (async () => {
+      if (playingUri === card.fileUri && soundRef.current) { await soundRef.current.unloadAsync(); soundRef.current = null; setPlayingUri(null); }
+      await deleteAgentCard(card);
+      setSelected(null);
+      await refresh();
+    })() }
+  ]);
+  const favoriteCard = async (card: LocalAgentCard) => {
+    const updated = await toggleAgentCardFavorite(card);
+    setCards((current) => current.map((item) => item.id === updated.id ? updated : item));
+  };
+  const processAll = async () => {
+    if (busy) return;
+    for (const card of cards.filter((item) => item.status === 'pending' || item.status === 'failed')) {
+      await processCard(card);
+    }
+    await refresh();
+  };
+  const shareSelected = async () => {
+    const message = currentNote
+      ? [noteTitle(currentNote, currentAnalysis), currentAnalysis?.meetingNotes, currentAnalysis?.transcript].filter(Boolean).join('\n\n')
+      : [currentCard?.title, currentCard?.output, currentCard?.transcript].filter(Boolean).join('\n\n');
+    if (message) await Share.share({ message });
+  };
+  const changeTab = (next: Tab) => {
+    setSelected(null);
+    setTab(next);
+    setQuery('');
+    setSearching(false);
+    if (next === 'processes') setProcessFilter(finishedProcesses.length ? 'Finished' : 'In progress');
+  };
   const currentNote = selected?.kind === 'note' ? files.find((file) => file.id === selected.id) : undefined;
   const currentAnalysis = currentNote ? analyses[currentNote.id] : undefined;
   const currentCard = selected?.kind === 'process' ? cards.find((card) => card.id === selected.id) : undefined;
@@ -112,9 +196,7 @@ export function ReferenceUI() {
           <View style={s.detailTop}>
             <Pressable onPress={() => setSelected(null)} accessibilityLabel="Back"><ArrowLeft size={20} color={ink} /></Pressable>
             <Text style={s.detailTopTitle} numberOfLines={1}>{currentNote ? noteTitle(currentNote, currentAnalysis) : currentCard?.title || 'Process'}</Text>
-            <Pressable onPress={() => currentNote
-              ? navigation.navigate('RecordingSummary', { id: currentNote.id })
-              : navigation.navigate('MainTabs', { screen: 'Assistants' })} accessibilityLabel="Open full tools">
+            <Pressable onPress={() => void shareSelected()} accessibilityLabel="Share capture">
               <Share2 size={18} color={ink} />
             </Pressable>
           </View>
@@ -127,12 +209,19 @@ export function ReferenceUI() {
           {currentNote ? (
             <>
               <View style={s.sectionRow}><Text style={s.detailSectionTitle}>Capture</Text><Text style={s.hint}>{dateLabel(currentNote.modifiedAt)}</Text></View>
+              <View style={s.detailActions}>
+                <Pressable style={s.utilityAction} onPress={() => void togglePlayback(currentNote.uri)}>
+                  {playingUri === currentNote.uri && isPlaying ? <Pause color={ink} size={17} /> : <Play color={ink} size={17} />}
+                  <Text style={s.utilityText}>{playingUri === currentNote.uri && isPlaying ? 'Pause audio' : 'Play audio'}</Text>
+                </Pressable>
+                <Pressable style={s.utilityAction} onPress={() => removeNote(currentNote)}><Trash2 color={red} size={17} /><Text style={s.utilityText}>Delete</Text></Pressable>
+              </View>
               {currentAnalysis?.status !== 'completed' && <Pressable disabled={busy} style={s.primaryAction} onPress={() => void processNote(currentNote)}><Sparkles color="#121818" size={16} /><Text style={s.primaryActionText}>{busy ? 'Processing…' : 'Process recording'}</Text></Pressable>}
               {currentAnalysis?.status === 'completed' && <>
               <Pressable style={s.detailEntry} onPress={() => navigation.navigate('RecordingSummary', { id: currentNote.id })}>
                 <View style={s.entryAccent} /><View style={s.grow}><Text style={s.entryTitle}>Notes and AI tools</Text><Text style={s.entryCaption}>Summaries, templates and questions</Text></View><ChevronRight size={17} color={muted} />
               </Pressable>
-              <Pressable style={s.detailEntry} onPress={() => navigation.navigate('Transcript', { id: currentNote.id })}>
+              <Pressable style={s.detailEntry} onPress={() => navigation.navigate('RecordingSummary', { id: currentNote.id, tab: 'transcript' })}>
                 <View style={[s.entryAccent, { backgroundColor: violet }]} /><View style={s.grow}><Text style={s.entryTitle}>Transcript</Text><Text style={s.entryCaption} numberOfLines={1}>{currentAnalysis.transcript || 'Open transcript'}</Text></View><ChevronRight size={17} color={muted} />
               </Pressable>
               </>}
@@ -146,9 +235,20 @@ export function ReferenceUI() {
             <>
               <View style={s.sectionRow}><Text style={s.detailSectionTitle}>Process</Text><Text style={s.hint}>{statusLabel(currentCard.status)}</Text></View>
               {(currentCard.status === 'pending' || currentCard.status === 'failed') && <Pressable disabled={busy} style={s.primaryAction} onPress={() => void processCard(currentCard)}><Sparkles color="#121818" size={16} /><Text style={s.primaryActionText}>{busy ? 'Processing…' : 'Process capture'}</Text></Pressable>}
-              <Pressable style={s.detailEntry} onPress={() => navigation.navigate('MainTabs', { screen: 'Assistants' })}>
-                <View style={[s.entryAccent, { backgroundColor: processColor(currentCard.status) }]} /><View style={s.grow}><Text style={s.entryTitle}>Open assistant process</Text><Text style={s.entryCaption}>Process, edit, play or export this capture</Text></View><ChevronRight size={17} color={muted} />
-              </Pressable>
+              {currentCard.error ? <Text style={s.errorText}>{currentCard.error}</Text> : null}
+              <View style={s.detailActions}>
+                <Pressable style={s.utilityAction} onPress={() => void togglePlayback(currentCard.fileUri)}>
+                  {playingUri === currentCard.fileUri && isPlaying ? <Pause color={ink} size={17} /> : <Play color={ink} size={17} />}
+                  <Text style={s.utilityText}>{playingUri === currentCard.fileUri && isPlaying ? 'Pause audio' : 'Play audio'}</Text>
+                </Pressable>
+                <Pressable style={s.utilityAction} onPress={() => void favoriteCard(currentCard)}><Heart color={red} fill={currentCard.favorite ? red : 'transparent'} size={17} /><Text style={s.utilityText}>{currentCard.favorite ? 'Saved' : 'Save'}</Text></Pressable>
+                <Pressable style={s.utilityAction} onPress={() => removeCard(currentCard)}><Trash2 color={red} size={17} /><Text style={s.utilityText}>Delete</Text></Pressable>
+              </View>
+              {currentCard.imageUrl ? <Image source={{ uri: currentCard.imageUrl }} style={s.generatedImage} resizeMode="contain" /> : null}
+              {currentCard.transcript ? <View style={s.transcriptCard}><Text style={s.overviewTitle}>Transcript</Text><Text style={s.overviewText}>{currentCard.transcript}</Text></View> : null}
+              {currentCard.office?.status === 'ready' ? <Pressable style={s.detailEntry} onPress={() => void openCardOffice(currentCard).catch((error) => Alert.alert('Open document', String(error)))}><View style={[s.entryAccent, { backgroundColor: mint }]} /><View style={s.grow}><Text style={s.entryTitle}>Open {currentCard.office.kind === 'pptx' ? 'presentation' : 'PDF'}</Text><Text style={s.entryCaption}>{currentCard.office.fileName || 'Saved document'}</Text></View><ChevronRight size={17} color={muted} /></Pressable> : null}
+              {currentCard.office?.status === 'generating' ? <Pressable style={s.detailEntry} onPress={() => void cancelOfficeJob(currentCard.id)}><View style={[s.entryAccent, { backgroundColor: orange }]} /><View style={s.grow}><Text style={s.entryTitle}>Creating {currentCard.office.kind === 'pptx' ? 'presentation' : 'PDF'}…</Text><Text style={s.entryCaption}>Tap to cancel</Text></View><X size={17} color={muted} /></Pressable> : null}
+              {currentCard.office?.status === 'failed' ? <Pressable style={s.detailEntry} onPress={() => void startOfficeJob(currentCard, currentCard.office!.kind, currentCard.office!.prompt || currentCard.transcript || currentCard.output || '')}><View style={[s.entryAccent, { backgroundColor: red }]} /><View style={s.grow}><Text style={s.entryTitle}>Retry document</Text><Text style={s.entryCaption}>{currentCard.office.error || 'Document generation failed'}</Text></View><ChevronRight size={17} color={muted} /></Pressable> : null}
               <Text style={s.detailSectionTitle}>Sequence</Text>
               <View style={s.sequenceCard}>
                 <SequenceStep color={orange} title="Captured" description={dateLabel(currentCard.modifiedAt)} />
@@ -165,7 +265,7 @@ export function ReferenceUI() {
                 <ImageBackground source={hero} resizeMode="cover" style={s.hero} imageStyle={s.heroImage}>
                   <View style={s.heroShade} />
                   <View style={s.heroTop}>
-                    <Pressable onPress={() => navigation.goBack()} accessibilityLabel="Switch to original UI"><Menu color={ink} size={23} /></Pressable>
+                    <Pressable onPress={() => setMenuOpen(true)} accessibilityLabel="Open menu"><Menu color={ink} size={23} /></Pressable>
                     <Pressable onPress={() => navigation.navigate('Sync')} style={s.battery}>
                       <BatteryMedium color={orange} size={25} />
                       <Text style={s.batteryText}>{connected ? 'Connected' : 'Connect ring'}</Text>
@@ -192,7 +292,7 @@ export function ReferenceUI() {
                 </View>
                 <View style={s.quickActions}>
                   <Pressable style={s.quickAction} onPress={() => navigation.navigate('Sync')}><Mic2 color={ink} size={18} /><Text style={s.quickText}>Sync ring</Text></Pressable>
-                  <Pressable style={s.quickAction} onPress={() => navigation.navigate('MainTabs', { screen: 'Records' })}><PenLine color={ink} size={18} /><Text style={s.quickText}>Recording tools</Text></Pressable>
+                  <Pressable style={s.quickAction} onPress={() => changeTab('notes')}><PenLine color={ink} size={18} /><Text style={s.quickText}>Recording tools</Text></Pressable>
                   <Pressable style={s.quickAction} onPress={() => navigation.navigate('Me')}><Settings2 color={ink} size={18} /><Text style={s.quickText}>Settings</Text></Pressable>
                 </View>
               </>
@@ -200,7 +300,7 @@ export function ReferenceUI() {
               <>
                 <View style={s.header}>
                   {searching ? <TextInput autoFocus value={query} onChangeText={setQuery} placeholder={`Search ${tab}`} placeholderTextColor={muted} style={s.searchInput} /> : <Text style={s.pageTitle}>{tab === 'notes' ? 'Notes' : 'Processes'}</Text>}
-                  <Pressable onPress={() => tab === 'notes' ? navigation.navigate('MainTabs', { screen: 'Records' }) : navigation.navigate('MainTabs', { screen: 'Assistants' })} accessibilityLabel="Open all tools"><Grid2X2 color={ink} size={19} /></Pressable>
+                  <Pressable onPress={() => { setQuery(''); setNoteFilter('All'); void refresh(); }} accessibilityLabel="Refresh"><RefreshCw color={ink} size={19} /></Pressable>
                   <Pressable onPress={() => { setSearching(!searching); setQuery(''); }} accessibilityLabel="Search"><Search color={ink} size={21} /></Pressable>
                 </View>
                 {tab === 'notes' ? (
@@ -215,7 +315,7 @@ export function ReferenceUI() {
                         </Pressable>
                       )) : <Text style={s.emptyText}>Your recent captures will appear here.</Text>}
                     </View>
-                    <View style={s.sectionRow}><Text style={s.sectionTitle}>Recent notes</Text><Pressable onPress={() => navigation.navigate('MainTabs', { screen: 'Records' })}><ArrowRight color={muted} size={18} /></Pressable></View>
+                    <View style={s.sectionRow}><Text style={s.sectionTitle}>Recent notes</Text><Pressable onPress={() => setNoteFilter('All')} accessibilityLabel="Show all notes"><ArrowRight color={muted} size={18} /></Pressable></View>
                     <View style={s.listPanel}>
                       <View style={s.filterRow}>{(['All', 'Ready', 'To process'] as NoteFilter[]).map((filter) => <Chip key={filter} label={filter} selected={noteFilter === filter} onPress={() => setNoteFilter(filter)} />)}</View>
                       {shownNotes.length ? shownNotes.map((file, index) => <View key={file.id}>
@@ -231,7 +331,7 @@ export function ReferenceUI() {
                       <View style={s.filterRow}><Chip label="In progress" selected={processFilter === 'In progress'} onPress={() => setProcessFilter('In progress')} /><Chip label="Finished" selected={processFilter === 'Finished'} onPress={() => setProcessFilter('Finished')} /></View>
                       {shownProcesses.length ? shownProcesses.map((card) => <Pressable key={card.id} style={s.listRow} onPress={() => openProcess(card)}><View style={[s.colorBar, { backgroundColor: processColor(card.status) }]} /><View style={s.grow}><Text style={s.rowTitle} numberOfLines={1}>{card.title}</Text><Text style={[s.rowSub, { color: processColor(card.status) }]}>{statusLabel(card.status)} · {card.category}</Text></View><ChevronRight color={muted} size={16} /></Pressable>) : <Text style={s.emptyText}>No processes in this view.</Text>}
                     </View>
-                    <Pressable style={s.processAction} onPress={() => navigation.navigate('MainTabs', { screen: 'Assistants' })}><Plus color={ink} size={18} /><Text style={s.quickText}>Open assistant tools</Text><ChevronRight color={muted} size={16} /></Pressable>
+                    <Pressable style={s.processAction} disabled={busy || !cards.some((card) => card.status === 'pending' || card.status === 'failed')} onPress={() => void processAll()}><Plus color={ink} size={18} /><Text style={s.quickText}>{busy ? 'Processing…' : 'Process all pending captures'}</Text><ChevronRight color={muted} size={16} /></Pressable>
                   </>
                 )}
               </>
@@ -244,6 +344,21 @@ export function ReferenceUI() {
           </View>
         </>
       )}
+      {currentCard ? <AgentSkillPanel card={currentCard} onApplied={(updated) => {
+        setCards((current) => current.map((card) => card.id === updated.id ? updated : card));
+      }} /> : null}
+      <Modal transparent visible={menuOpen} animationType="fade" onRequestClose={() => setMenuOpen(false)}>
+        <Pressable style={s.menuBackdrop} onPress={() => setMenuOpen(false)}>
+          <View style={s.menuPanel}>
+            <View style={s.menuHeader}><Text style={s.menuTitle}>Spur Ring</Text><Pressable onPress={() => setMenuOpen(false)} accessibilityLabel="Close menu"><X color={ink} size={20} /></Pressable></View>
+            <Pressable style={s.menuRow} onPress={() => { setMenuOpen(false); changeTab('home'); }}><Home color={ink} size={18} /><Text style={s.menuText}>Home</Text></Pressable>
+            <Pressable style={s.menuRow} onPress={() => { setMenuOpen(false); changeTab('notes'); }}><PenLine color={ink} size={18} /><Text style={s.menuText}>Notes and recordings</Text></Pressable>
+            <Pressable style={s.menuRow} onPress={() => { setMenuOpen(false); changeTab('processes'); }}><Settings2 color={ink} size={18} /><Text style={s.menuText}>Processes</Text></Pressable>
+            <Pressable style={s.menuRow} onPress={() => { setMenuOpen(false); navigation.navigate('Sync'); }}><Mic2 color={ink} size={18} /><Text style={s.menuText}>Ring sync</Text></Pressable>
+            <Pressable style={s.menuRow} onPress={() => { setMenuOpen(false); navigation.navigate('Me'); }}><Settings2 color={ink} size={18} /><Text style={s.menuText}>Settings</Text></Pressable>
+          </View>
+        </Pressable>
+      </Modal>
     </View>
   );
 }
@@ -292,5 +407,17 @@ const s = StyleSheet.create({
   overviewCard: { backgroundColor: panel, borderRadius: 18, padding: 18, marginTop: 15, marginBottom: 25, maxHeight: 180 }, overviewTitle: { color: ink, fontSize: 13, fontWeight: '700', marginBottom: 9 }, overviewText: { color: '#d0d4d3', fontSize: 10, lineHeight: 15 },
   detailSectionTitle: { color: ink, fontSize: 13, fontWeight: '700', marginBottom: 12 }, hint: { color: muted, fontSize: 9 }, detailEntry: { minHeight: 67, flexDirection: 'row', alignItems: 'center', gap: 15, marginBottom: 6, paddingHorizontal: 10 }, entryAccent: { width: 3, height: 23, backgroundColor: orange }, entryTitle: { color: ink, fontSize: 11, fontWeight: '700' }, entryCaption: { color: muted, fontSize: 9, marginTop: 5 },
   sequenceCard: { backgroundColor: panel, borderRadius: 18, paddingHorizontal: 17, paddingTop: 20, paddingBottom: 4 }, sequenceRow: { flexDirection: 'row', gap: 16, minHeight: 78, alignItems: 'flex-start' }, timeline: { alignItems: 'center', width: 13, height: 78 }, timelineDot: { width: 7, height: 7, borderRadius: 4, marginTop: 6 }, timelineLine: { flex: 1, width: 2, backgroundColor: '#d4d7d7', marginTop: 3 },
-  primaryAction: { alignSelf: 'flex-start', flexDirection: 'row', alignItems: 'center', gap: 8, borderRadius: 99, backgroundColor: '#e8eceb', paddingHorizontal: 17, paddingVertical: 11, marginBottom: 17 }, primaryActionText: { color: '#121818', fontWeight: '800', fontSize: 11 }
+  primaryAction: { alignSelf: 'flex-start', flexDirection: 'row', alignItems: 'center', gap: 8, borderRadius: 99, backgroundColor: '#e8eceb', paddingHorizontal: 17, paddingVertical: 11, marginBottom: 17 }, primaryActionText: { color: '#121818', fontWeight: '800', fontSize: 11 },
+  detailActions: { flexDirection: 'row', flexWrap: 'wrap', gap: 8, marginBottom: 17 },
+  utilityAction: { flexDirection: 'row', alignItems: 'center', gap: 7, borderRadius: 12, backgroundColor: panel, paddingHorizontal: 11, paddingVertical: 10 },
+  utilityText: { color: ink, fontSize: 10, fontWeight: '700' },
+  generatedImage: { width: '100%', height: 230, borderRadius: 16, backgroundColor: panel, marginBottom: 18 },
+  errorText: { color: red, fontSize: 11, marginBottom: 12 },
+  transcriptCard: { backgroundColor: panel, borderRadius: 18, padding: 18, marginBottom: 25 },
+  menuBackdrop: { flex: 1, backgroundColor: 'rgba(0,0,0,0.72)', justifyContent: 'flex-start' },
+  menuPanel: { width: '78%', height: '100%', backgroundColor: '#151a1b', paddingHorizontal: 20, paddingTop: 54 },
+  menuHeader: { flexDirection: 'row', alignItems: 'center', justifyContent: 'space-between', marginBottom: 30 },
+  menuTitle: { color: ink, fontSize: 20, fontWeight: '800' },
+  menuRow: { flexDirection: 'row', alignItems: 'center', gap: 14, minHeight: 55, borderBottomWidth: 1, borderBottomColor: '#303637' },
+  menuText: { color: ink, fontSize: 13, fontWeight: '600' }
 });

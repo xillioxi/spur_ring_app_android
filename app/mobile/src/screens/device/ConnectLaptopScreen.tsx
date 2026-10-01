@@ -268,7 +268,7 @@ const styles = StyleSheet.create({
     borderRadius: 21,
     alignItems: 'center',
     justifyContent: 'center',
-    backgroundColor: '#f3f3f3',
+    backgroundColor: colors.cardSoft,
     borderWidth: 1,
     borderColor: colors.border
   },
@@ -319,7 +319,7 @@ const styles = StyleSheet.create({
   primaryButton: {
     minHeight: 48,
     borderRadius: 14,
-    backgroundColor: colors.text,
+    backgroundColor: colors.primary,
     alignItems: 'center',
     justifyContent: 'center'
   },
@@ -365,7 +365,7 @@ const styles = StyleSheet.create({
   logCard: {
     padding: 14,
     borderRadius: 14,
-    backgroundColor: '#f5f7f9',
+    backgroundColor: colors.cardSoft,
     borderWidth: 1,
     borderColor: colors.border
   },

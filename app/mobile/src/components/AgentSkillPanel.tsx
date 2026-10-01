@@ -464,7 +464,7 @@ const styles = StyleSheet.create({
     borderColor: colors.border,
     alignItems: 'center',
     justifyContent: 'center',
-    backgroundColor: '#f5f5f5'
+    backgroundColor: colors.cardSoft
   },
   confirmBtn: {
     minHeight: 36,

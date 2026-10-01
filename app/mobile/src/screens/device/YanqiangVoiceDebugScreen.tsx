@@ -463,7 +463,7 @@ const styles = StyleSheet.create({
   hintCard: {
     padding: 14,
     borderRadius: 14,
-    backgroundColor: '#f5f7f9',
+    backgroundColor: colors.cardSoft,
     borderWidth: 1,
     borderColor: colors.border,
     marginBottom: 12
@@ -490,7 +490,7 @@ const styles = StyleSheet.create({
     borderRadius: 21,
     alignItems: 'center',
     justifyContent: 'center',
-    backgroundColor: '#f3f3f3',
+    backgroundColor: colors.cardSoft,
     borderWidth: 1,
     borderColor: colors.border
   },
@@ -513,7 +513,7 @@ const styles = StyleSheet.create({
   primaryButton: {
     minHeight: 48,
     borderRadius: 14,
-    backgroundColor: colors.text,
+    backgroundColor: colors.primary,
     flexDirection: 'row',
     alignItems: 'center',
     justifyContent: 'center',
@@ -628,7 +628,7 @@ const styles = StyleSheet.create({
     width: 40,
     height: 40,
     borderRadius: 20,
-    backgroundColor: '#f3f3f3',
+    backgroundColor: colors.cardSoft,
     alignItems: 'center',
     justifyContent: 'center',
     borderWidth: 1,
@@ -643,7 +643,7 @@ const styles = StyleSheet.create({
     flexDirection: 'row',
     alignItems: 'center',
     gap: 5,
-    backgroundColor: colors.text,
+    backgroundColor: colors.primary,
     borderRadius: 11,
     paddingHorizontal: 12,
     paddingVertical: 9
@@ -657,7 +657,7 @@ const styles = StyleSheet.create({
     flexDirection: 'row',
     alignItems: 'center',
     gap: 5,
-    backgroundColor: '#fff1f1',
+    backgroundColor: '#3b2429',
     borderRadius: 11,
     paddingHorizontal: 11,
     paddingVertical: 9

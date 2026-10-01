@@ -1,21 +1,11 @@
 export type RootStackParamList = {
-  MainTabs: undefined;
+  RingApp: undefined;
   Sync: undefined;
-  LegacyUI: undefined;
-  ReferenceUI: undefined;
   Device: undefined;
   ConnectLaptop: undefined;
   CloudOffice: undefined;
   Me: undefined;
-  RecordingSummary: { id: string };
-  Transcript: { id: string };
+  RecordingSummary: { id: string; tab?: 'notes' | 'transcript' };
   YanqiangRecordingDebug: { macAddress: string };
   YanqiangButtonDebug: { macAddress: string };
-  DeviceDetail: { deviceId?: string };
-};
-
-export type MainTabParamList = {
-  Home: undefined;
-  Records: undefined;
-  Assistants: undefined;
 };

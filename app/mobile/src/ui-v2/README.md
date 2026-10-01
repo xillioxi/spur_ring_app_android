@@ -1,10 +1,5 @@
-# Reference UI version
+# Spur Ring interface
 
-`ReferenceUI.tsx` is a separate screen registered as `ReferenceUI` in the root navigator. The original `Home`, `Records`, and `Assistants` tabs remain the default UI.
+`RingAppScreen.tsx` is the sole root interface. It opens directly at app launch and contains Home, Notes, Processes, search, capture details, playback, processing, favorites, sharing, and deletion. Ring sync, device controls, settings, and advanced note tools remain reachable from this interface.
 
-- Open **New UI** from the original Home screen.
-- Tap the menu icon in the new Home screen to return to the original UI.
-- Home shows ring connection state and recent captures. Notes uses the existing recording and analysis stores. Processes uses the existing agent card store. No sample projects or made-up battery percentage are shown.
-- Captures and processes can be processed from this UI. Their detailed tools still open the existing recording, transcript, and assistant screens, using the same underlying data and services.
-
-The hero image is a copy of the existing `images/bedrock.webp` asset. The supplied reference image remains only a visual guide and is not bundled into the app.
+The previous Home/Records/Assistants tab navigator and legacy UI switch are removed from the app navigation. The reference image is a visual guide only; the hero image is the existing `images/bedrock.webp` asset copied into this module.
