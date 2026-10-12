@@ -5,12 +5,16 @@ import {
   YanqiangVoiceEvents,
   YanqiangVoiceNative
 } from '@/native/YanqiangVoiceNative'
-import { getRingUiSession } from '@/services/ringConnectionSession'
-import { purgeReimportedDeletedAudio } from '@/services/localAudioLibrary'
+import { getRingUiSession, setRingUiConnection } from '@/services/ringConnectionSession'
+import { listLocalAudioFiles, purgeReimportedDeletedAudio } from '@/services/localAudioLibrary'
+import { processAgentCard, syncLocalAgentCards } from '@/services/localAgentCards'
+import { listRecordingAnalyses, processLocalRecording } from '@/services/localRecordingAnalysis'
+import { isDemoAudioName } from '@/services/demoContent'
+import { inferOfficeKind, startOfficeJob } from '@/services/officeJob'
 
 export const AUTO_SYNC_COMPLETE_EVENT = 'spur.autoSyncComplete'
 
-const POLL_INTERVAL_MS = 18_000
+const POLL_INTERVAL_MS = 60_000
 const RECORDING_END_DELAY_MS = 900
 const CONNECT_SYNC_DELAY_MS = 600
 const SYNC_LOCK_TIMEOUT_MS = 3 * 60_000
@@ -23,6 +27,9 @@ let connected = false
 let appActive = true
 let pendingTimer: ReturnType<typeof setTimeout> | null = null
 let pollTimer: ReturnType<typeof setInterval> | null = null
+let processingCommands = false
+let processingNotes = false
+let lastSyncedFileSignature: string | null = null
 
 /**
  * Keeps local recordings in sync while the app is open and the ring is connected:
@@ -39,6 +46,7 @@ export function startAutoSyncWatch() {
     const status = String(event?.status || '')
     if (status === 'connected') {
       connected = true
+      setRingUiConnection('connected', event?.macAddress || getRingUiSession().connectedMac)
       console.log('[autoSync] connected → schedule sync')
       scheduleAutoSync(CONNECT_SYNC_DELAY_MS, 'connect')
       startPolling()
@@ -46,6 +54,7 @@ export function startAutoSyncWatch() {
     }
     if (status === 'disconnected' || status === 'error') {
       connected = false
+      setRingUiConnection(status, status === 'disconnected' ? null : getRingUiSession().connectedMac)
       stopPolling()
       console.log('[autoSync] disconnected → pause polling')
     }
@@ -68,6 +77,11 @@ export function startAutoSyncWatch() {
     if (!readyToSync) return
     console.log('[autoSync] recording-end state → schedule sync', { next, wasRecording })
     scheduleAutoSync(RECORDING_END_DELAY_MS, 'recording-end')
+  })
+
+  YanqiangVoiceEvents.addListener(YanqiangVoiceEventNames.commandCaptured, () => {
+    DeviceEventEmitter.emit(AUTO_SYNC_COMPLETE_EVENT, { reason: 'command-captured', count: 1 })
+    void processPendingCommands()
   })
 
   AppState.addEventListener('change', onAppStateChange)
@@ -136,13 +150,72 @@ async function runAutoSync(reason: string) {
     const result = await YanqiangVoiceNative.syncVoiceRecordings()
     await purgeReimportedDeletedAudio()
     const count = result?.files?.length ?? 0
+    const signature = JSON.stringify((result?.files ?? [])
+      .map((file) => [file.name, file.size, file.timestamp])
+      .sort((a, b) => String(a[0]).localeCompare(String(b[0]))))
+    const changed = signature !== lastSyncedFileSignature
+    lastSyncedFileSignature = signature
     console.log('[autoSync] success', reason, 'files=', count)
-    DeviceEventEmitter.emit(AUTO_SYNC_COMPLETE_EVENT, { reason, count })
+    if (changed) {
+      DeviceEventEmitter.emit(AUTO_SYNC_COMPLETE_EVENT, { reason, count })
+    }
+    // Gesture routing is attached to the synced ring file. Both destinations
+    // begin with the same capture and transcription pipeline, then Notes and
+    // Processes handle their own completed result.
+    await Promise.all([processPendingNotes(), processPendingCommands()])
   } catch (error) {
     // Busy / not-ready are expected during recording; keep quiet-ish.
     console.warn('[autoSync] failed', reason, error)
   } finally {
     syncInFlight = false
     syncStartedAt = 0
+  }
+}
+
+async function processPendingNotes() {
+  if (processingNotes) return
+  processingNotes = true
+  try {
+    const [files, analyses] = await Promise.all([
+      listLocalAudioFiles(),
+      listRecordingAnalyses()
+    ])
+    for (const file of files) {
+      if (file.category !== 'recording' || isDemoAudioName(file.name)) continue
+      const existing = analyses[file.id]
+      if (existing?.status === 'completed' || existing?.status === 'processing') continue
+      try {
+        await processLocalRecording(file)
+        DeviceEventEmitter.emit(AUTO_SYNC_COMPLETE_EVENT, { reason: 'note-processed', count: 1 })
+      } catch (error) {
+        console.warn('[autoSync] note processing failed', file.name, error)
+      }
+    }
+  } finally {
+    processingNotes = false
+  }
+}
+
+async function processPendingCommands() {
+  if (processingCommands) return
+  processingCommands = true
+  try {
+    const cards = await syncLocalAgentCards()
+    for (const card of cards) {
+      if (card.status !== 'pending' || !card.fileName.startsWith('command-')) continue
+      try {
+        const result = await processAgentCard(card)
+        const kind = inferOfficeKind(result.transcript || '')
+        if (kind) void startOfficeJob(result, kind, [result.transcript, result.output].filter(Boolean).join('\n\n'))
+      } catch (error) {
+        console.warn('[autoSync] command processing failed', card.fileName, error)
+      } finally {
+        DeviceEventEmitter.emit(AUTO_SYNC_COMPLETE_EVENT, { reason: 'command-processed', count: 0 })
+      }
+    }
+  } catch (error) {
+    console.warn('[autoSync] unable to scan commands', error)
+  } finally {
+    processingCommands = false
   }
 }

@@ -9,6 +9,8 @@
 # Agent local artifacts
 agent/runtime/*.zip
 agent/runtime/.deepseek-harness.git.bak/
+artifact_work/
+**/*-jstack.txt
 
 
 # Dependencies

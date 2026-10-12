@@ -58,6 +58,12 @@ export async function processAudioWithAi(input: {
     try {
       payload = JSON.parse(text);
     } catch {
+      if (!response.ok) {
+        if ([502, 503, 504].includes(response.status)) {
+          throw new Error(`Cloud service is unavailable (HTTP ${response.status}). Please try again later.`);
+        }
+        throw new Error(`Cloud request failed (HTTP ${response.status})`);
+      }
       throw new Error(`Cloud returned invalid JSON (${response.status})`);
     }
 

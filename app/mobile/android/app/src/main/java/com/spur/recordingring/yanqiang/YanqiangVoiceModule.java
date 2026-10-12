@@ -9,6 +9,7 @@ import android.content.Context;
 import android.content.Intent;
 import android.content.SharedPreferences;
 import android.content.pm.PackageManager;
+import android.net.Uri;
 import android.os.Handler;
 import android.os.Looper;
 import android.provider.Settings;
@@ -20,6 +21,7 @@ import androidx.annotation.Nullable;
 import com.eiot.aizo.sdk.callback.AizoDeviceConnectCallback;
 import com.eiot.ringsdk.ServiceSdkCommandV2;
 import com.eiot.ringsdk.bean.ExBluetoothDevice;
+import com.eiot.ringsdk.bean.DeviceSmartTouchMode;
 import com.eiot.ringsdk.bean.FileUploadStateBean;
 import com.eiot.ringsdk.bean.OpusFileBean;
 import com.eiot.ringsdk.bean.SmartTouchEventModel;
@@ -31,6 +33,7 @@ import com.eiot.ringsdk.bean.devicesetting.VoiceRecordParam;
 import com.eiot.ringsdk.bean.devicesetting.VoiceRecordSettingResult;
 import com.eiot.ringsdk.callback.BCallback;
 import com.eiot.ringsdk.callback.DeviceStorageStateCallback;
+import com.eiot.ringsdk.callback.DeviceSmartTouchModeCallback;
 import com.eiot.ringsdk.callback.DeviceWorkingStateCallback;
 import com.eiot.ringsdk.callback.OggFileCallback;
 import com.eiot.ringsdk.callback.OnBluetoothSearchListener;
@@ -69,6 +72,11 @@ public class YanqiangVoiceModule extends ReactContextBaseJavaModule {
   private static final String PREFS_NAME = "spur-ring-background-sync";
   private static final String PREF_RING_MAC = "ring-mac";
   private static final String PREF_ELEVENLABS_API_KEY = "elevenlabs-api-key";
+  private static final String PREF_PENDING_CAPTURE_ROUTE = "pending-capture-route";
+  private static final String PREF_PENDING_CAPTURE_ROUTE_AT = "pending-capture-route-at";
+  private static final String CAPTURE_ROUTE_NOTE = "note";
+  private static final String CAPTURE_ROUTE_PROCESS = "process";
+  private static final long CAPTURE_ROUTE_EXPIRY_MS = 15 * 60_000L;
   private static WeakReference<YanqiangVoiceModule> activeModule = new WeakReference<>(null);
 
   private boolean sdkInitialized = false;
@@ -81,20 +89,12 @@ public class YanqiangVoiceModule extends ReactContextBaseJavaModule {
   private volatile boolean vendorConnected = false;
   private volatile boolean connectionInProgress = false;
   private volatile long lastBackgroundReconnectAt = 0L;
-  private volatile long lastDoubleClickAt = 0L;
-
   private final DeviceWorkingStateCallback workingStateCallback = new DeviceWorkingStateCallback() {
     @Override
     public void onState(@NonNull DeviceWorkingState state) {
       currentWorkingState = state.getState();
-      // Some firmware reports hold/release only as recording-state transitions. Do not treat the
-      // state=2 transition caused by a double-click as dictation; double-click keeps its original
-      // record-toggle behavior.
-      if (state.getState() == 2 && System.currentTimeMillis() - lastDoubleClickAt > 900L) {
-        RingDictationAccessibilityService.startFromRing();
-      } else if (state.getState() == 4 && RingDictationAccessibilityService.isListening()) {
-        RingDictationAccessibilityService.stopFromRing();
-      }
+      // Working state reports capture progress only. SmartTouch labels the
+      // finished ring recording as a Note or Process after it is synced.
       WritableMap body = Arguments.createMap();
       body.putInt("function", state.getFunction());
       body.putInt("state", state.getState());
@@ -110,11 +110,9 @@ public class YanqiangVoiceModule extends ReactContextBaseJavaModule {
       for (SmartTouchEventModel event : events) {
         String action = mapSmartTouchEvent(event.getEvent());
         if ("double_click".equals(action)) {
-          lastDoubleClickAt = System.currentTimeMillis();
+          markNextRingCapture(CAPTURE_ROUTE_NOTE);
         } else if ("long_press".equals(action)) {
-          RingDictationAccessibilityService.startFromRing();
-        } else if ("release_press".equals(action)) {
-          RingDictationAccessibilityService.stopFromRing();
+          markNextRingCapture(CAPTURE_ROUTE_PROCESS);
         }
         WritableMap body = Arguments.createMap();
         body.putDouble("timestamp", event.getTime());
@@ -124,6 +122,7 @@ public class YanqiangVoiceModule extends ReactContextBaseJavaModule {
       }
     }
   };
+
 
   private final AizoDeviceConnectCallback connectCallback = new AizoDeviceConnectCallback() {
     @Override
@@ -142,6 +141,9 @@ public class YanqiangVoiceModule extends ReactContextBaseJavaModule {
             vendorConnected = true;
             ServiceSdkCommandV2.INSTANCE.requestConnectionPriority();
             enableTouchReportingForRingControls();
+            new Handler(Looper.getMainLooper()).postDelayed(() -> {
+              if (vendorConnected) enableTouchReportingForRingControls();
+            }, 1500L);
             body.putString("status", "connected");
           } else {
             vendorConnected = false;
@@ -211,6 +213,20 @@ public class YanqiangVoiceModule extends ReactContextBaseJavaModule {
     } catch (Throwable error) {
       Log.e(TAG, "unable to send dictation audio to Spur transcription", error);
       return false;
+    }
+  }
+
+  public static void emitQuickNoteSaved() {
+    YanqiangVoiceModule module = activeModule.get();
+    if (module != null) {
+      module.sendEvent("yanqiangQuickNoteSaved", Arguments.createMap());
+    }
+  }
+
+  public static void emitCommandCaptured() {
+    YanqiangVoiceModule module = activeModule.get();
+    if (module != null) {
+      module.sendEvent("yanqiangCommandCaptured", Arguments.createMap());
     }
   }
 
@@ -478,6 +494,52 @@ public class YanqiangVoiceModule extends ReactContextBaseJavaModule {
   @ReactMethod
   public void syncVoiceRecordings(Promise promise) {
     syncVoiceRecordingsInternal(promise);
+  }
+
+  @ReactMethod
+  public void getRingConnectionStatus(Promise promise) {
+    WritableMap status = Arguments.createMap();
+    status.putBoolean("connected", vendorConnected);
+    status.putBoolean("initialized", sdkInitialized);
+    status.putString("macAddress", currentMacAddress);
+    status.putInt("workingState", currentWorkingState);
+    promise.resolve(status);
+  }
+
+  @ReactMethod
+  public void showRingStatusNotification(String kind, String detail, Promise promise) {
+    try {
+      promise.resolve(RingStatusNotifications.show(
+          getReactApplicationContext(), kind == null ? "" : kind,
+          detail == null ? "" : detail));
+    } catch (Throwable error) {
+      Log.w(TAG, "unable to show ring result notification", error);
+      promise.reject("RING_NOTIFICATION_FAILED", rootErrorMessage(error), error);
+    }
+  }
+
+  @ReactMethod
+  public void getRingOverlayStatus(Promise promise) {
+    promise.resolve(RingResultOverlay.canShow(getReactApplicationContext()));
+  }
+
+  @ReactMethod
+  public void openRingOverlaySettings(Promise promise) {
+    try {
+      Intent intent = new Intent(Settings.ACTION_MANAGE_OVERLAY_PERMISSION,
+          Uri.parse("package:" + getReactApplicationContext().getPackageName()));
+      intent.addFlags(Intent.FLAG_ACTIVITY_NEW_TASK);
+      getReactApplicationContext().startActivity(intent);
+      promise.resolve(true);
+    } catch (Throwable error) {
+      promise.reject("RING_OVERLAY_SETTINGS_FAILED", rootErrorMessage(error), error);
+    }
+  }
+
+  @ReactMethod
+  public void previewRingOverlay(String kind, Promise promise) {
+    String previewKind = "process".equals(kind) ? "process" : "note";
+    promise.resolve(RingResultOverlay.show(getReactApplicationContext(), previewKind));
   }
 
   @ReactMethod
@@ -827,6 +889,24 @@ public class YanqiangVoiceModule extends ReactContextBaseJavaModule {
 
   private void enableTouchReportingForRingControls() {
     try {
+      // The SDK has two independent switches. Event reporting alone is not
+      // enough: touchAppSwitch must also be enabled while preserving the
+      // ring's selected touch mode.
+      ServiceSdkCommandV2.INSTANCE.getDeviceSmartTouchMode(new DeviceSmartTouchModeCallback() {
+        @Override public void deviceSmartTouch(DeviceSmartTouchMode mode) {
+          if (mode == null) {
+            Log.w(TAG, "ring smart touch mode unavailable");
+            return;
+          }
+          mode.setTouchAppSwitch(1);
+          ServiceSdkCommandV2.INSTANCE.setDeviceSmartTouchMode(mode, new BCallback() {
+            @Override public void result(boolean success) {
+              Log.i(TAG, "ring smart touch app switch result=" + success
+                  + " mode=" + mode.getTouchMode());
+            }
+          });
+        }
+      });
       ServiceSdkCommandV2.INSTANCE.setTouchEventReportSwitch(1, new ICallback() {
         @Override public void result(int result) {
           Log.i(TAG, "ring control touch reporting result=" + result);
@@ -893,7 +973,17 @@ public class YanqiangVoiceModule extends ReactContextBaseJavaModule {
       baseName += ".ogg";
     }
 
+    boolean alreadySaved = new File(dir, baseName).exists() ||
+        new File(dir, "command-" + baseName).exists();
+    String captureRoute = alreadySaved
+        ? CAPTURE_ROUTE_NOTE
+        : consumePendingCaptureRoute(opusFile.getFileTime());
+    if (CAPTURE_ROUTE_PROCESS.equals(captureRoute) && !baseName.startsWith("command-")) {
+      baseName = "command-" + baseName;
+    }
+
     File out = new File(dir, baseName);
+    boolean firstSave = !out.exists();
     try (FileOutputStream stream = new FileOutputStream(out)) {
       stream.write(oggBytes);
     }
@@ -908,7 +998,47 @@ public class YanqiangVoiceModule extends ReactContextBaseJavaModule {
     item.putDouble("timestamp", out.lastModified());
     item.putDouble("size", out.length());
     item.putDouble("rawFileTime", rawFileTime);
+    item.putBoolean("new", firstSave);
+    item.putString("captureRoute", captureRoute);
     return item;
+  }
+
+  private void markNextRingCapture(@NonNull String route) {
+    getPreferences().edit()
+        .putString(PREF_PENDING_CAPTURE_ROUTE, route)
+        .putLong(PREF_PENDING_CAPTURE_ROUTE_AT, System.currentTimeMillis())
+        .apply();
+    Log.i(TAG, "next ring capture route=" + route);
+  }
+
+  @NonNull
+  private synchronized String consumePendingCaptureRoute(long rawFileTime) {
+    SharedPreferences preferences = getPreferences();
+    String route = preferences.getString(PREF_PENDING_CAPTURE_ROUTE, CAPTURE_ROUTE_NOTE);
+    long markedAt = preferences.getLong(PREF_PENDING_CAPTURE_ROUTE_AT, 0L);
+    long now = System.currentTimeMillis();
+
+    if (markedAt <= 0L || now - markedAt > CAPTURE_ROUTE_EXPIRY_MS) {
+      preferences.edit()
+          .remove(PREF_PENDING_CAPTURE_ROUTE)
+          .remove(PREF_PENDING_CAPTURE_ROUTE_AT)
+          .apply();
+      return CAPTURE_ROUTE_NOTE;
+    }
+
+    // A catch-up sync can contain older recordings. Leave the marker in place
+    // until the file timestamp reaches the gesture that created this capture.
+    long fileTimestamp = normalizeFileTimestamp(rawFileTime);
+    boolean hasEpochTimestamp = rawFileTime >= 946684800L;
+    if (hasEpochTimestamp && fileTimestamp < markedAt - CAPTURE_ROUTE_EXPIRY_MS) {
+      return CAPTURE_ROUTE_NOTE;
+    }
+
+    preferences.edit()
+        .remove(PREF_PENDING_CAPTURE_ROUTE)
+        .remove(PREF_PENDING_CAPTURE_ROUTE_AT)
+        .apply();
+    return CAPTURE_ROUTE_PROCESS.equals(route) ? CAPTURE_ROUTE_PROCESS : CAPTURE_ROUTE_NOTE;
   }
 
   private long normalizeFileTimestamp(long rawFileTime) {

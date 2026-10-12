@@ -5,9 +5,10 @@ import { ChevronLeft, ChevronRight, Info, User } from 'lucide-react-native';
 import { AppScreen } from '@/components/AppScreen';
 import { colors } from '@/theme/colors';
 import { t } from '@/locales';
+import { exportRecoveryReport } from '@/services/recoveryExport';
 
 const FREE_MINUTES = 300;
-const APP_VERSION = '1.0.0';
+const APP_VERSION = '1.0.27';
 
 export function MeScreen() {
   const navigation = useNavigation();
@@ -47,6 +48,16 @@ export function MeScreen() {
           <View style={styles.rowLeft}>
             <Info color={colors.text} size={16} />
             <Text style={styles.rowLabel}>{t.me.aboutSpur}</Text>
+          </View>
+          <ChevronRight color={colors.textTertiary} size={18} />
+        </Pressable>
+        <Pressable style={[styles.row, { marginTop: 10 }]} onPress={() => {
+          void exportRecoveryReport().catch((error) =>
+            Alert.alert('Export failed', error instanceof Error ? error.message : String(error)));
+        }}>
+          <View style={styles.rowLeft}>
+            <Info color={colors.text} size={16} />
+            <Text style={styles.rowLabel}>Export saved data</Text>
           </View>
           <ChevronRight color={colors.textTertiary} size={18} />
         </Pressable>

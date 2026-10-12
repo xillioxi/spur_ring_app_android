@@ -30,7 +30,7 @@ import java.lang.ref.WeakReference;
 import java.util.Arrays;
 import java.util.List;
 
-/** Push-to-talk dictation into the editable field that had focus when the ring was held. */
+/** Long-press voice capture for Processes, including while another app is in front. */
 public final class RingDictationAccessibilityService extends AccessibilityService {
   private static final String TAG = "RingDictation";
   private static WeakReference<RingDictationAccessibilityService> activeService =
@@ -40,6 +40,7 @@ public final class RingDictationAccessibilityService extends AccessibilityServic
   private static final int DICTATION_SAMPLE_RATE = 16000;
   private static final long FINISH_TIMEOUT_MS = 12_000L;
   private AudioRecord audioRecord;
+  private RingCommandAudioStore commandAudioStore;
   private ElevenLabsRealtimeTranscriber transcriber;
   private Thread captureThread;
   private TextView overlay;
@@ -78,6 +79,11 @@ public final class RingDictationAccessibilityService extends AccessibilityServic
     return service != null && service.listening;
   }
 
+  @Nullable
+  static RingDictationAccessibilityService getActiveService() {
+    return activeService.get();
+  }
+
   public static boolean startFromRing() {
     RingDictationAccessibilityService service = activeService.get();
     if (service == null) return false;
@@ -89,6 +95,17 @@ public final class RingDictationAccessibilityService extends AccessibilityServic
     RingDictationAccessibilityService service = activeService.get();
     if (service == null) return false;
     service.mainHandler.post(service::finishPushToTalk);
+    return true;
+  }
+
+  public static boolean cancelFromRing() {
+    RingDictationAccessibilityService service = activeService.get();
+    if (service == null) return false;
+    service.mainHandler.post(() -> {
+      service.cancelRecognition();
+      service.clearTarget();
+      service.hideOverlay();
+    });
     return true;
   }
 
@@ -112,7 +129,7 @@ public final class RingDictationAccessibilityService extends AccessibilityServic
     service.mainHandler.post(() -> {
       String value = text == null ? "" : text.trim();
       service.lastPartialText = value;
-      service.showOverlay(value.isEmpty() ? "Listening… release to insert" : value);
+      service.showOverlay(value.isEmpty() ? "Listening…" : value);
     });
     return true;
   }
@@ -127,14 +144,19 @@ public final class RingDictationAccessibilityService extends AccessibilityServic
 
   @Override
   public void onAccessibilityEvent(AccessibilityEvent event) {
-    if (event == null || listening) return;
+    if (listening || processing || event == null) return;
     int type = event.getEventType();
     if (type != AccessibilityEvent.TYPE_VIEW_FOCUSED &&
         type != AccessibilityEvent.TYPE_VIEW_CLICKED &&
-        type != AccessibilityEvent.TYPE_VIEW_TEXT_CHANGED &&
         type != AccessibilityEvent.TYPE_VIEW_TEXT_SELECTION_CHANGED) return;
     AccessibilityNodeInfo source = event.getSource();
-    if (source != null) rememberClosestTextTarget(source);
+    if (source == null) return;
+    try {
+      if (type == AccessibilityEvent.TYPE_VIEW_CLICKED) clearTarget();
+      rememberClosestTextTarget(source);
+    } finally {
+      source.recycle();
+    }
   }
 
   @Override public void onInterrupt() { cancelRecognition(); }
@@ -156,15 +178,13 @@ public final class RingDictationAccessibilityService extends AccessibilityServic
       transientOverlay("Allow microphone access in Spur Ring", 2500L);
       return;
     }
-    AccessibilityNodeInfo focused = validTarget(dictationTarget)
-        ? AccessibilityNodeInfo.obtain(dictationTarget)
-        : findFocusedEditable();
-    if (focused == null) {
-      transientOverlay("Place the cursor in a text field first", 2200L);
-      return;
+    AccessibilityNodeInfo focused = findFocusedEditable();
+    if (focused != null) {
+      rememberTarget(focused);
+      focused.recycle();
+    } else if (!validTarget(dictationTarget)) {
+      clearTarget();
     }
-    rememberTarget(focused);
-    focused.recycle();
 
     String apiKey = getSharedPreferences("spur-ring-background-sync", MODE_PRIVATE)
         .getString("elevenlabs-api-key", "");
@@ -182,7 +202,7 @@ public final class RingDictationAccessibilityService extends AccessibilityServic
               mainHandler.post(() -> {
                 if (!listening && !processing) return;
                 lastPartialText = text.trim();
-                showOverlay(lastPartialText.isEmpty() ? "Listening… release to insert" : lastPartialText);
+                showOverlay(lastPartialText.isEmpty() ? "Listening…" : lastPartialText);
               });
             }
 
@@ -196,11 +216,12 @@ public final class RingDictationAccessibilityService extends AccessibilityServic
           });
       transcriber.start(apiKey.trim());
       startRealtimeAudioCapture();
-      showOverlay("Listening… release to insert");
+      showOverlay("Listening…");
     } catch (Throwable error) {
       listening = false;
       Log.e(TAG, "Unable to start Spur dictation capture", error);
       releaseAudioRecord();
+      discardCommandAudio();
       transientOverlay("Unable to start microphone", 2000L);
     }
   }
@@ -217,18 +238,54 @@ public final class RingDictationAccessibilityService extends AccessibilityServic
   }
 
   private void commitRecognizedText(@Nullable String value) {
+    if (cancelCapture) return;
     String text = value == null ? "" : value.trim();
     listening = false;
     processing = false;
     mainHandler.removeCallbacks(finishingTimeout);
     closeTranscriber();
     if (text.isEmpty()) {
+      discardCommandAudio();
       transientOverlay("No speech detected", 1200L);
+      clearTarget();
       return;
     }
-    boolean inserted = insertAtSelection(text);
-    transientOverlay(inserted ? "Inserted" : "Select a text field and try again",
-        inserted ? 700L : 1800L);
+    if (dictationTarget != null) {
+      boolean inserted = insertAtSelection(text);
+      clearTarget();
+      if (inserted) {
+        discardCommandAudio();
+        transientOverlay("Text inserted", 1200L);
+        return;
+      }
+      Log.w(TAG, "Focused text field rejected accessibility text insertion; preserving capture as Process");
+    }
+    processing = true;
+    RingCommandAudioStore saved = commandAudioStore;
+    commandAudioStore = null;
+    saveProcessAsync(saved, text);
+  }
+
+  private void saveProcessAsync(@Nullable RingCommandAudioStore saved, @NonNull String text) {
+    showOverlay("Saving process…");
+    new Thread(() -> {
+      try {
+        if (saved == null) throw new IllegalStateException("Voice command audio unavailable");
+        saved.finish(DICTATION_SAMPLE_RATE, text);
+        mainHandler.post(() -> {
+          processing = false;
+          hideOverlay();
+          YanqiangVoiceModule.emitCommandCaptured();
+        });
+      } catch (Exception error) {
+        if (saved != null) saved.discard();
+        Log.e(TAG, "Unable to save voice command", error);
+        mainHandler.post(() -> {
+          processing = false;
+          transientOverlay("Could not save process", 2000L);
+        });
+      }
+    }, "SpurCommandSave").start();
   }
 
   private void failTranscription(@Nullable String message) {
@@ -236,6 +293,7 @@ public final class RingDictationAccessibilityService extends AccessibilityServic
     processing = false;
     mainHandler.removeCallbacks(finishingTimeout);
     closeTranscriber();
+    discardCommandAudio();
     String detail = message == null ? "" : message.trim();
     transientOverlay(detail.isEmpty() ? "Spur transcription failed" : detail, 2500L);
   }
@@ -258,6 +316,12 @@ public final class RingDictationAccessibilityService extends AccessibilityServic
       throw new IllegalStateException("Microphone initialization failed");
     }
     audioRecord.startRecording();
+    try {
+      commandAudioStore = new RingCommandAudioStore(getApplicationContext());
+    } catch (Exception error) {
+      releaseAudioRecord();
+      throw new IllegalStateException("Unable to save voice command audio", error);
+    }
     captureThread = new Thread(() -> captureRealtimePcm(bufferSize), "SpurRealtimeDictation");
     captureThread.start();
   }
@@ -268,6 +332,8 @@ public final class RingDictationAccessibilityService extends AccessibilityServic
       while (listening && audioRecord != null) {
         int count = audioRecord.read(buffer, 0, buffer.length);
         if (count > 0) {
+          RingCommandAudioStore recording = commandAudioStore;
+          if (recording != null) recording.append(buffer, count);
           String chunk = Base64.encodeToString(Arrays.copyOf(buffer, count), Base64.NO_WRAP);
           ElevenLabsRealtimeTranscriber current = transcriber;
           if (current == null) break;
@@ -297,6 +363,12 @@ public final class RingDictationAccessibilityService extends AccessibilityServic
     if (current == null) return;
     try { current.release(); }
     catch (RuntimeException error) { Log.w(TAG, "Unable to release microphone", error); }
+  }
+
+  private void discardCommandAudio() {
+    RingCommandAudioStore recording = commandAudioStore;
+    commandAudioStore = null;
+    if (recording != null) recording.discard();
   }
 
   private boolean insertAtSelection(@NonNull String spokenText) {
@@ -343,7 +415,7 @@ public final class RingDictationAccessibilityService extends AccessibilityServic
   }
 
   private boolean validTarget(@Nullable AccessibilityNodeInfo node) {
-    return node != null && node.refresh() && isTextTarget(node);
+    return node != null && node.refresh() && node.isFocused() && isTextTarget(node);
   }
 
   private boolean isTextTarget(@Nullable AccessibilityNodeInfo node) {
@@ -441,6 +513,7 @@ public final class RingDictationAccessibilityService extends AccessibilityServic
       catch (RuntimeException ignored) {}
     }
     releaseAudioRecord();
+    discardCommandAudio();
   }
 
   private void closeTranscriber() {

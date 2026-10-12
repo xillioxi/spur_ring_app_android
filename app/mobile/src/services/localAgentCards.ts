@@ -3,6 +3,7 @@ import * as FileSystem from 'expo-file-system/legacy';
 import { processAudioWithAi } from '@/services/audioAgentApi';
 import { compareDemoFirst, isDemoAudioName } from '@/services/demoContent';
 import { deleteLocalAudioFile, listLocalAudioFiles, type LocalAudioFile } from '@/services/localAudioLibrary';
+import { YanqiangVoiceNative } from '@/native/YanqiangVoiceNative';
 
 export type AgentCardStatus = 'pending' | 'processing' | 'completed' | 'failed';
 export type AgentCardCategory = 'idea' | 'report' | 'action' | 'note';
@@ -42,11 +43,13 @@ export type LocalAgentCard = {
 };
 
 const INDEX_PATH = `${FileSystem.documentDirectory}agent-cards.json`;
+const BACKUP_PATH = `${FileSystem.documentDirectory}agent-cards.backup.json`;
+let mutationQueue: Promise<void> = Promise.resolve();
 
-export async function syncLocalAgentCards(): Promise<LocalAgentCard[]> {
-  const [files, saved] = await Promise.all([listLocalAudioFiles(), readCards()]);
-  const shortFiles = files.filter((file) => file.category === 'agent');
-  const cards = shortFiles.map((file) => {
+export async function syncLocalAgentCards(knownFiles?: LocalAudioFile[]): Promise<LocalAgentCard[]> {
+  const [files, saved] = await Promise.all([knownFiles ?? listLocalAudioFiles(), readCards()]);
+  const shortFiles = files.filter((file) => file.category === 'agent' || Boolean(saved[file.id]));
+  const cards = await Promise.all(shortFiles.map(async (file) => {
     const existing = saved[file.id];
     if (!existing) return createPendingCard(file);
     // Keep completed demo payload, but always refresh playable uri/duration from disk.
@@ -58,32 +61,34 @@ export async function syncLocalAgentCards(): Promise<LocalAgentCard[]> {
       durationMs: file.durationMs || existing.durationMs,
       modifiedAt: file.modifiedAt || existing.modifiedAt
     };
-  });
+  }));
 
-  // Keep seeded demo cards only when the audio file still exists (duration decode can mis-bucket).
+  // Existing results are user data. A change in routing must never erase their index.
   const onDiskNames = new Set(files.map((file) => file.name));
   for (const card of Object.values(saved)) {
-    if (!isDemoAudioName(card.fileName)) continue;
-    if (!onDiskNames.has(card.fileName)) continue;
-    if (cards.some((item) => item.id === card.id || item.fileName === card.fileName)) continue;
+    if (cards.some((item) => item.id === card.id)) continue;
+    if (!onDiskNames.has(card.fileName) && card.status !== 'completed' && !card.office) continue;
     cards.push(card);
   }
 
   const latestSaved = await readCards();
   for (const card of cards) {
     const live = latestSaved[card.id];
-    if (live?.office && (live.updatedAt || 0) >= (card.updatedAt || 0)) {
-      card.office = live.office;
-      card.updatedAt = live.updatedAt;
+    if (live && (live.updatedAt || 0) >= (card.updatedAt || 0)) {
+      Object.assign(card, live, {
+        fileUri: card.fileUri,
+        fileName: card.fileName,
+        durationMs: card.durationMs,
+        modifiedAt: card.modifiedAt
+      });
     }
   }
 
-  await writeCards(Object.fromEntries(cards.map((card) => [card.id, card])));
-  const { markStaleOfficeJobs } = await import('@/services/officeJob');
-  return sortCards(await markStaleOfficeJobs(cards));
+  return sortCards(cards);
 }
 
 export async function getLocalAgentCard(id: string): Promise<LocalAgentCard | null> {
+  await mutationQueue;
   const cards = await readCards();
   return cards[id] ?? null;
 }
@@ -109,6 +114,12 @@ export async function processAgentCard(card: LocalAgentCard): Promise<LocalAgent
       updatedAt: Date.now()
     };
     await saveCard(completed);
+    if (!isDemoAudioName(completed.fileName) && YanqiangVoiceNative.isAvailable) {
+      void YanqiangVoiceNative.showRingStatusNotification(
+        'process',
+        'Your process is ready in Spur Ring'
+      ).catch((error) => console.warn('[ringStatus] notification failed', error));
+    }
     return completed;
   } catch (error) {
     const failed: LocalAgentCard = {
@@ -165,9 +176,7 @@ export async function deleteAgentCard(card: LocalAgentCard) {
   if (card.imageUrl?.startsWith('file')) {
     await FileSystem.deleteAsync(card.imageUrl, { idempotent: true }).catch(() => undefined);
   }
-  const cards = await readCards();
-  delete cards[card.id];
-  await writeCards(cards);
+  await mutateCards((cards) => { delete cards[card.id]; });
 }
 
 async function cacheGeneratedImage(cardId: string, remoteUrl?: string): Promise<string | undefined> {
@@ -185,7 +194,16 @@ async function cacheGeneratedImage(cardId: string, remoteUrl?: string): Promise<
   }
 }
 
-function createPendingCard(file: LocalAudioFile): LocalAgentCard {
+async function createPendingCard(file: LocalAudioFile): Promise<LocalAgentCard> {
+  let transcript = '';
+  if (file.name.startsWith('command-') && file.name.endsWith('.wav')) {
+    try {
+      const metadata = JSON.parse(await FileSystem.readAsStringAsync(`${file.uri}.json`));
+      if (typeof metadata.transcript === 'string') transcript = metadata.transcript.trim();
+    } catch {
+      // The audio can still be processed without the optional local transcript.
+    }
+  }
   return {
     id: file.id,
     fileUri: file.uri,
@@ -194,29 +212,38 @@ function createPendingCard(file: LocalAudioFile): LocalAgentCard {
     modifiedAt: file.modifiedAt,
     status: 'pending',
     favorite: false,
-    title: `Voice Command ${formatClock(file.modifiedAt)}`,
-    category: 'note',
+    title: transcript ? deriveTitle('', transcript) : `Voice Command ${formatClock(file.modifiedAt)}`,
+    category: 'action',
+    transcript: transcript || undefined,
     updatedAt: Date.now()
   };
 }
 
 async function readCards(): Promise<Record<string, LocalAgentCard>> {
-  try {
-    const parsed = JSON.parse(await FileSystem.readAsStringAsync(INDEX_PATH));
-    return parsed && typeof parsed === 'object' ? parsed : {};
-  } catch {
-    return {};
+  for (const path of [INDEX_PATH, BACKUP_PATH]) {
+    try {
+      const parsed = JSON.parse(await FileSystem.readAsStringAsync(path));
+      if (parsed && typeof parsed === 'object' && !Array.isArray(parsed)) return parsed;
+    } catch { /* Try the backup after a partial write. */ }
   }
+  return {};
 }
 
 async function saveCard(card: LocalAgentCard) {
-  const cards = await readCards();
-  cards[card.id] = card;
-  await writeCards(cards);
+  await mutateCards((cards) => { cards[card.id] = card; });
 }
 
-async function writeCards(cards: Record<string, LocalAgentCard>) {
-  await FileSystem.writeAsStringAsync(INDEX_PATH, JSON.stringify(cards));
+async function mutateCards(change: (cards: Record<string, LocalAgentCard>) => void): Promise<void> {
+  const operation = mutationQueue.then(async () => {
+    const original = await readCards();
+    const cards = { ...original };
+    change(cards);
+    await FileSystem.writeAsStringAsync(BACKUP_PATH, JSON.stringify(original)).catch((error) =>
+      console.warn('[agentCards] backup failed', error));
+    await FileSystem.writeAsStringAsync(INDEX_PATH, JSON.stringify(cards));
+  });
+  mutationQueue = operation.catch(() => undefined);
+  await operation;
 }
 
 function sortCards(cards: LocalAgentCard[]) {

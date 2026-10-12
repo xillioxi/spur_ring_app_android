@@ -1,6 +1,6 @@
 import { useCallback, useEffect, useState } from 'react';
-import { Alert, PermissionsAndroid, Platform, Pressable, StyleSheet, Text, View } from 'react-native';
-import { AudioLines, Bluetooth, ChevronLeft, ChevronRight, Link2, Radio, Unlink } from 'lucide-react-native';
+import { Alert, AppState, PermissionsAndroid, Platform, Pressable, StyleSheet, Text, View } from 'react-native';
+import { AudioLines, Bell, Bluetooth, ChevronLeft, ChevronRight, Link2, Radio, Unlink } from 'lucide-react-native';
 import { useFocusEffect, useNavigation } from '@react-navigation/native';
 import type { NativeStackNavigationProp } from '@react-navigation/native-stack';
 
@@ -35,6 +35,7 @@ export function YanqiangVoiceDebugScreen() {
   const [connectionState, setConnectionState] = useState<ConnectionState>(cached.connectionState);
   const [connectedMac, setConnectedMac] = useState<string | null>(cached.connectedMac);
   const [dictationEnabled, setDictationEnabled] = useState(false);
+  const [overlayEnabled, setOverlayEnabled] = useState(false);
 
   const pushLog = useCallback((text: string) => {
     console.log('[YanqiangVoiceDebug]', text);
@@ -52,12 +53,34 @@ export function YanqiangVoiceDebugScreen() {
         pushLog(`ui-restore: connected ${session.connectedMac}`);
       }
       if (Platform.OS === 'android' && YanqiangVoiceNative.isAvailable) {
+        void YanqiangVoiceNative.getRingConnectionStatus().then((nativeStatus) => {
+          if (!nativeStatus) return;
+          setInitialized(nativeStatus.initialized);
+          setRingUiInitialized(nativeStatus.initialized);
+          setConnectionState(nativeStatus.connected ? 'connected' : 'disconnected');
+          setConnectedMac(nativeStatus.connected ? nativeStatus.macAddress : null);
+          setRingUiConnection(nativeStatus.connected ? 'connected' : 'disconnected',
+            nativeStatus.connected ? nativeStatus.macAddress : null);
+        }).catch((error) => pushLog(`native connection status: ${errorMessage(error)}`));
+        void YanqiangVoiceNative.getRingOverlayStatus().then(setOverlayEnabled)
+          .catch(() => setOverlayEnabled(false));
         void YanqiangVoiceNative.getRingDictationStatus()
           .then((status) => setDictationEnabled(status.accessibilityEnabled))
           .catch(() => setDictationEnabled(false));
       }
     }, [pushLog])
   );
+
+  useEffect(() => {
+    if (Platform.OS !== 'android') return;
+    const subscription = AppState.addEventListener('change', (state) => {
+      if (state === 'active') {
+        void YanqiangVoiceNative.getRingOverlayStatus().then(setOverlayEnabled)
+          .catch(() => setOverlayEnabled(false));
+      }
+    });
+    return () => subscription.remove();
+  }, []);
 
   useEffect(() => {
     pushLog(
@@ -118,6 +141,9 @@ export function YanqiangVoiceDebugScreen() {
       YanqiangVoiceEvents.addListener(YanqiangVoiceEventNames.status, (event) =>
         pushLog(`status: ${JSON.stringify(event)}`)
       ),
+      YanqiangVoiceEvents.addListener(YanqiangVoiceEventNames.touch, (event) =>
+        pushLog(`touch: ${JSON.stringify(event)}`)
+      ),
       YanqiangVoiceEvents.addListener(YanqiangVoiceEventNames.error, (event) =>
         pushLog(`error: ${JSON.stringify(event)}`)
       )
@@ -172,6 +198,18 @@ export function YanqiangVoiceDebugScreen() {
       return;
     }
     await YanqiangVoiceNative.openRingDictationSettings();
+  }
+
+  async function setupFloatingConfirmation(kind: 'note' | 'process') {
+    try {
+      if (await YanqiangVoiceNative.getRingOverlayStatus()) {
+        await YanqiangVoiceNative.previewRingOverlay(kind);
+      } else {
+        await YanqiangVoiceNative.openRingOverlaySettings();
+      }
+    } catch (error) {
+      pushLog(`floating confirmation: FAILED ${errorMessage(error)}`);
+    }
   }
 
   async function initialize() {
@@ -306,6 +344,32 @@ export function YanqiangVoiceDebugScreen() {
           {scanning ? t.device.stopScan : t.device.scanDevices}
         </Text>
       </Pressable>
+
+      {Platform.OS === 'android' ? (
+        <View style={styles.section}>
+          <Text style={styles.sectionTitle}>{t.device.floatingSection}</Text>
+          <Pressable style={styles.row} onPress={() => void setupFloatingConfirmation('note')}>
+            <Bell color={overlayEnabled ? colors.success : colors.text} size={20} />
+            <View style={styles.flex}>
+              <Text style={styles.rowLabel}>Preview Note captured</Text>
+              <Text style={styles.rowHint}>
+                {overlayEnabled ? t.device.floatingReady : t.device.floatingSetup}
+              </Text>
+            </View>
+            <ChevronRight color={colors.textTertiary} size={18} />
+          </Pressable>
+          <Pressable style={[styles.row, { marginTop: 10 }]} onPress={() => void setupFloatingConfirmation('process')}>
+            <Bell color={overlayEnabled ? '#E85D9E' : colors.text} size={20} />
+            <View style={styles.flex}>
+              <Text style={styles.rowLabel}>Preview Process started</Text>
+              <Text style={styles.rowHint}>
+                {overlayEnabled ? 'Pink Android overlay above other apps' : t.device.floatingSetup}
+              </Text>
+            </View>
+            <ChevronRight color={colors.textTertiary} size={18} />
+          </Pressable>
+        </View>
+      ) : null}
 
       <View style={styles.section}>
         <Text style={styles.sectionTitle}>{t.device.computerSection}</Text>

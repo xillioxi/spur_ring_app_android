@@ -34,6 +34,13 @@ type RingDictationStatus = {
   listening: boolean
 }
 
+type RingConnectionStatus = {
+  connected: boolean
+  initialized: boolean
+  macAddress: string | null
+  workingState: number
+}
+
 type RingDictationAudio = {
   uri: string
   name: string
@@ -48,6 +55,7 @@ type RingDictationStreamEvent = {
 
 type YanqiangVoiceNativeModule = {
   initSdk(): Promise<boolean>
+  getRingConnectionStatus?(): Promise<RingConnectionStatus>
   resumeBackgroundSync?(): Promise<boolean>
   startScan(): Promise<boolean>
   stopScan(): void
@@ -64,6 +72,10 @@ type YanqiangVoiceNativeModule = {
   getElevenLabsApiKey(packagedKey: string): Promise<string>
   queryVoiceRecordingSummary(): Promise<RecordingSummary>
   syncVoiceRecordings(): Promise<{ files: NativeFile[] }>
+  showRingStatusNotification?(kind: 'note' | 'process', detail: string): Promise<boolean>
+  getRingOverlayStatus?(): Promise<boolean>
+  openRingOverlaySettings?(): Promise<boolean>
+  previewRingOverlay?(kind: 'note' | 'process'): Promise<boolean>
   getVoiceRecordParam(): Promise<VoiceRecordParamResult>
   setVoiceRecordParam(
     bitrate: number,
@@ -77,6 +89,7 @@ const native = NativeModules.YanqiangVoiceModule as YanqiangVoiceNativeModule | 
 export const YanqiangVoiceNative = {
   isAvailable: (Platform.OS === 'android' || Platform.OS === 'ios') && !!native,
   initSdk: () => requireNative().initSdk(),
+  getRingConnectionStatus: () => native?.getRingConnectionStatus?.() ?? Promise.resolve(null),
   resumeBackgroundSync: () => native?.resumeBackgroundSync?.() ?? Promise.resolve(false),
   startScan: () => requireNative().startScan(),
   stopScan: () => requireNative().stopScan(),
@@ -95,6 +108,12 @@ export const YanqiangVoiceNative = {
     requireNative().getElevenLabsApiKey(packagedKey),
   queryVoiceRecordingSummary: () => requireNative().queryVoiceRecordingSummary(),
   syncVoiceRecordings: () => requireNative().syncVoiceRecordings(),
+  showRingStatusNotification: (kind: 'note' | 'process', detail: string) =>
+    native?.showRingStatusNotification?.(kind, detail) ?? Promise.resolve(false),
+  getRingOverlayStatus: () => native?.getRingOverlayStatus?.() ?? Promise.resolve(false),
+  openRingOverlaySettings: () => native?.openRingOverlaySettings?.() ?? Promise.resolve(false),
+  previewRingOverlay: (kind: 'note' | 'process' = 'note') =>
+    native?.previewRingOverlay?.(kind) ?? Promise.resolve(false),
   getVoiceRecordParam: () => requireNative().getVoiceRecordParam(),
   setVoiceRecordParam: (bitrate: number, volume: number, lightBrightness: number) =>
     requireNative().setVoiceRecordParam(bitrate, volume, lightBrightness),
@@ -113,6 +132,8 @@ export const YanqiangVoiceEventNames = {
   touch: 'yanqiangSmartTouchEvent',
   dictationAudio: 'yanqiangDictationAudioReady',
   dictationStream: 'yanqiangDictationStream',
+  quickNoteSaved: 'yanqiangQuickNoteSaved',
+  commandCaptured: 'yanqiangCommandCaptured',
 } as const
 
 function requireNative(): YanqiangVoiceNativeModule {

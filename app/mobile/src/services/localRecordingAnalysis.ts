@@ -7,6 +7,8 @@ import {
   transcribeDirectWithScribe
 } from '@/services/elevenLabsScribe';
 import type { LocalAudioFile } from '@/services/localAudioLibrary';
+import { isDemoAudioName } from '@/services/demoContent';
+import { YanqiangVoiceNative } from '@/native/YanqiangVoiceNative';
 import {
   buildMeetingNotePrompt,
   getMeetingNoteTemplate,
@@ -68,6 +70,7 @@ export async function processLocalRecording(file: LocalAudioFile): Promise<Local
         meetingNotes: await createMeetingNotes(result.transcript)
       };
       await saveRecordingAnalysis(completed);
+      notifyNoteSaved(completed);
       return completed;
     }
 
@@ -83,6 +86,7 @@ export async function processLocalRecording(file: LocalAudioFile): Promise<Local
       remoteId: result.id
     };
     await saveRecordingAnalysis(completed);
+    notifyNoteSaved(completed);
     return completed;
   } catch (error) {
     const failed: LocalRecordingAnalysis = {
@@ -92,6 +96,13 @@ export async function processLocalRecording(file: LocalAudioFile): Promise<Local
     await saveRecordingAnalysis(failed);
     throw error;
   }
+}
+
+function notifyNoteSaved(record: LocalRecordingAnalysis): void {
+  if (!record.meetingNotes?.trim() || isDemoAudioName(record.fileName) ||
+      !YanqiangVoiceNative.isAvailable) return;
+  void YanqiangVoiceNative.showRingStatusNotification('note', 'Meeting notes are ready in Spur Ring')
+    .catch((error) => console.warn('[ringStatus] notification failed', error));
 }
 
 export function getMeetingNoteSummaries(record: LocalRecordingAnalysis): MeetingNoteSummary[] {
