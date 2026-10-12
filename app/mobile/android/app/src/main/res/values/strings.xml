@@ -1,4 +1,4 @@
 <resources>
   <string name="app_name">spur</string>
-  <string name="ring_dictation_accessibility_description">Hold the Spur Ring to dictate into the text field under the cursor. Release to insert the text.</string>
+  <string name="ring_dictation_accessibility_description">Hold the Spur Ring to speak. Release to save a voice command in Processes.</string>
 </resources>

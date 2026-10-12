@@ -2,6 +2,10 @@
 
 Spur 录音戒指 Private 主仓：可编译的 App（Android / iOS）+ 云端音频 Agent + 文档。
 
+This branch reconstructs the Android app shipped as SPUR Ring 1.0.16
+(version code 18). See [RECOVERY_V1.0.16.md](RECOVERY_V1.0.16.md) for the
+source artifact, recovered behavior, and verification record.
+
 ## 目录
 
 ```text

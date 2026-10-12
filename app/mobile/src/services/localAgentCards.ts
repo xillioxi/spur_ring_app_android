@@ -43,10 +43,10 @@ export type LocalAgentCard = {
 
 const INDEX_PATH = `${FileSystem.documentDirectory}agent-cards.json`;
 
-export async function syncLocalAgentCards(): Promise<LocalAgentCard[]> {
-  const [files, saved] = await Promise.all([listLocalAudioFiles(), readCards()]);
+export async function syncLocalAgentCards(knownFiles?: LocalAudioFile[]): Promise<LocalAgentCard[]> {
+  const [files, saved] = await Promise.all([knownFiles ?? listLocalAudioFiles(), readCards()]);
   const shortFiles = files.filter((file) => file.category === 'agent');
-  const cards = shortFiles.map((file) => {
+  const cards = await Promise.all(shortFiles.map(async (file) => {
     const existing = saved[file.id];
     if (!existing) return createPendingCard(file);
     // Keep completed demo payload, but always refresh playable uri/duration from disk.
@@ -58,7 +58,7 @@ export async function syncLocalAgentCards(): Promise<LocalAgentCard[]> {
       durationMs: file.durationMs || existing.durationMs,
       modifiedAt: file.modifiedAt || existing.modifiedAt
     };
-  });
+  }));
 
   // Keep seeded demo cards only when the audio file still exists (duration decode can mis-bucket).
   const onDiskNames = new Set(files.map((file) => file.name));
@@ -72,13 +72,18 @@ export async function syncLocalAgentCards(): Promise<LocalAgentCard[]> {
   const latestSaved = await readCards();
   for (const card of cards) {
     const live = latestSaved[card.id];
-    if (live?.office && (live.updatedAt || 0) >= (card.updatedAt || 0)) {
-      card.office = live.office;
-      card.updatedAt = live.updatedAt;
+    if (live && (live.updatedAt || 0) >= (card.updatedAt || 0)) {
+      Object.assign(card, live, {
+        fileUri: card.fileUri,
+        fileName: card.fileName,
+        durationMs: card.durationMs,
+        modifiedAt: card.modifiedAt
+      });
     }
   }
 
-  await writeCards(Object.fromEntries(cards.map((card) => [card.id, card])));
+  const next = Object.fromEntries(cards.map((card) => [card.id, card]));
+  if (JSON.stringify(next) !== JSON.stringify(latestSaved)) await writeCards(next);
   const { markStaleOfficeJobs } = await import('@/services/officeJob');
   return sortCards(await markStaleOfficeJobs(cards));
 }
@@ -185,7 +190,16 @@ async function cacheGeneratedImage(cardId: string, remoteUrl?: string): Promise<
   }
 }
 
-function createPendingCard(file: LocalAudioFile): LocalAgentCard {
+async function createPendingCard(file: LocalAudioFile): Promise<LocalAgentCard> {
+  let transcript = '';
+  if (file.name.startsWith('command-') && file.name.endsWith('.wav')) {
+    try {
+      const metadata = JSON.parse(await FileSystem.readAsStringAsync(`${file.uri}.json`));
+      if (typeof metadata.transcript === 'string') transcript = metadata.transcript.trim();
+    } catch {
+      // The audio can still be processed without the optional local transcript.
+    }
+  }
   return {
     id: file.id,
     fileUri: file.uri,
@@ -194,8 +208,9 @@ function createPendingCard(file: LocalAudioFile): LocalAgentCard {
     modifiedAt: file.modifiedAt,
     status: 'pending',
     favorite: false,
-    title: `Voice Command ${formatClock(file.modifiedAt)}`,
-    category: 'note',
+    title: transcript ? deriveTitle('', transcript) : `Voice Command ${formatClock(file.modifiedAt)}`,
+    category: 'action',
+    transcript: transcript || undefined,
     updatedAt: Date.now()
   };
 }

@@ -14,18 +14,22 @@ import {
 } from 'lucide-react-native';
 
 import { deleteLocalAudioFile, listLocalAudioFiles, preparePlayback, type LocalAudioFile } from '@/services/localAudioLibrary';
+import { isDemoAudioName } from '@/services/demoContent';
 import { AgentSkillPanel } from '@/components/AgentSkillPanel';
 import { deleteRecordingAnalysis, listRecordingAnalyses, processLocalRecording, type LocalRecordingAnalysis } from '@/services/localRecordingAnalysis';
 import { deleteAgentCard, processAgentCard, syncLocalAgentCards, toggleAgentCardFavorite, type LocalAgentCard } from '@/services/localAgentCards';
 import { cancelOfficeJob, inferOfficeKind, OFFICE_JOB_EVENT, openCardOffice, startOfficeJob } from '@/services/officeJob';
 import { getRingUiSession } from '@/services/ringConnectionSession';
+import { AUTO_SYNC_COMPLETE_EVENT } from '@/services/autoSyncRecordings';
 import { titleFromMeetingNotes } from '@/utils/meetingNotesTitle';
 import { createLocalProject, deleteLocalProject, listLocalProjects, removeNoteFromProjects, setProjectNote, type LocalProject } from '@/services/localProjects';
+import { deleteLocalQuickNote, listLocalQuickNotes, type LocalQuickNote } from '@/services/localQuickNotes';
+import { YanqiangVoiceEventNames, YanqiangVoiceEvents, YanqiangVoiceNative } from '@/native/YanqiangVoiceNative';
 
 type Tab = 'home' | 'notes' | 'processes';
-type Selected = { kind: 'note'; id: string } | { kind: 'process'; id: string } | { kind: 'project'; id: string } | null;
+type Selected = { kind: 'note'; id: string } | { kind: 'quickNote'; id: string } | { kind: 'process'; id: string } | { kind: 'project'; id: string } | null;
 type NoteFilter = 'All' | 'Unsorted' | 'Sorted';
-type ProcessFilter = 'In progress' | 'Finished';
+type ProcessFilter = 'All' | 'In progress' | 'Finished';
 
 const ink = '#f4f5f4';
 const muted = '#a0a7a8';
@@ -34,6 +38,7 @@ const orange = '#ffad12';
 const mint = '#59c78a';
 const violet = '#b438e8';
 const red = '#ed5260';
+const LIST_BATCH_SIZE = 30;
 const hero = require('../../assets/ui-v2/ring-hero-new.png');
 
 export function RingAppScreen() {
@@ -43,6 +48,7 @@ export function RingAppScreen() {
   const [selected, setSelected] = useState<Selected>(null);
   const [returnProjectId, setReturnProjectId] = useState<string | null>(null);
   const [files, setFiles] = useState<LocalAudioFile[]>([]);
+  const [quickNotes, setQuickNotes] = useState<LocalQuickNote[]>([]);
   const [analyses, setAnalyses] = useState<Record<string, LocalRecordingAnalysis>>({});
   const [cards, setCards] = useState<LocalAgentCard[]>([]);
   const [projects, setProjects] = useState<LocalProject[]>([]);
@@ -53,7 +59,9 @@ export function RingAppScreen() {
   const [query, setQuery] = useState('');
   const [searching, setSearching] = useState(false);
   const [noteFilter, setNoteFilter] = useState<NoteFilter>('All');
-  const [processFilter, setProcessFilter] = useState<ProcessFilter>('In progress');
+  const [processFilter, setProcessFilter] = useState<ProcessFilter>('All');
+  const [visibleNotes, setVisibleNotes] = useState(LIST_BATCH_SIZE);
+  const [visibleProcesses, setVisibleProcesses] = useState(LIST_BATCH_SIZE);
   const [busy, setBusy] = useState(false);
   const [menuOpen, setMenuOpen] = useState(false);
   const [playingUri, setPlayingUri] = useState<string | null>(null);
@@ -62,13 +70,21 @@ export function RingAppScreen() {
 
   const refresh = useCallback(async () => {
     try {
-      const [audio, saved, agents, localProjects] = await Promise.all([
-        listLocalAudioFiles(), listRecordingAnalyses(), syncLocalAgentCards(), listLocalProjects()
-      ]);
+      const audio = await listLocalAudioFiles();
       setFiles(audio.filter((item) => item.category === 'recording'));
-      setAnalyses(saved);
-      setCards(agents);
-      setProjects(localProjects);
+      const outcomes = await Promise.allSettled([
+        listRecordingAnalyses().then(setAnalyses),
+        syncLocalAgentCards(audio).then((agents) => {
+          const agentIds = new Set(agents.map((card) => card.id));
+          setCards(agents);
+          setFiles(audio.filter((item) => item.category === 'recording' && !agentIds.has(item.id)));
+        }),
+        listLocalProjects().then(setProjects),
+        listLocalQuickNotes().then(setQuickNotes),
+      ]);
+      outcomes.forEach((result, index) => {
+        if (result.status === 'rejected') console.warn('[ring-ui] saved section unavailable', index, result.reason);
+      });
       setConnected(getRingUiSession().connectionState === 'connected');
     } catch (error) {
       console.warn('[ring-ui] unable to load local content', error);
@@ -76,9 +92,14 @@ export function RingAppScreen() {
   }, []);
   useFocusEffect(useCallback(() => {
     void refresh();
-    const timer = setInterval(() => { void refresh(); }, 15000);
     const appSub = AppState.addEventListener('change', (state) => { if (state === 'active') void refresh(); });
-    return () => { clearInterval(timer); appSub.remove(); };
+    const syncSub = DeviceEventEmitter.addListener(AUTO_SYNC_COMPLETE_EVENT, () => { void refresh(); });
+    const noteSub = YanqiangVoiceEvents?.addListener(YanqiangVoiceEventNames.quickNoteSaved, () => { void refresh(); });
+    const commandSub = YanqiangVoiceEvents?.addListener(YanqiangVoiceEventNames.commandCaptured, () => { void refresh(); });
+    const connectionSub = YanqiangVoiceEvents?.addListener(YanqiangVoiceEventNames.connection, (event) => {
+      setConnected(event?.status === 'connected');
+    });
+    return () => { appSub.remove(); syncSub.remove(); noteSub?.remove(); commandSub?.remove(); connectionSub?.remove(); };
   }, [refresh]));
   useEffect(() => {
     const officeSub = DeviceEventEmitter.addListener(OFFICE_JOB_EVENT, (updated: LocalAgentCard) => {
@@ -96,20 +117,39 @@ export function RingAppScreen() {
   }, [menuOpen, projectModal, projectPicker, selected, tab, returnProjectId]);
   useEffect(() => () => { if (soundRef.current) void soundRef.current.unloadAsync(); }, []);
 
-  const readyNotes = files.filter((file) => analyses[file.id]?.status === 'completed');
-  const finishedProcesses = cards.filter((card) => card.status === 'completed');
+  const readyNotes = useMemo(() => files.filter((file) => analyses[file.id]?.status === 'completed'), [files, analyses]);
+  const finishedProcesses = useMemo(() => cards.filter((card) => card.status === 'completed'), [cards]);
+  const noteProjectTitles = useMemo(() => {
+    const titles = new Map<string, string[]>();
+    for (const project of projects) {
+      for (const id of project.noteIds) {
+        const existing = titles.get(id) ?? [];
+        existing.push(project.title);
+        titles.set(id, existing);
+      }
+    }
+    return titles;
+  }, [projects]);
   const shownNotes = useMemo(() => files.filter((file) => {
-    const sorted = projects.some((project) => project.noteIds.includes(file.id));
+    const sorted = noteProjectTitles.has(file.id);
     if (noteFilter === 'Sorted' && !sorted) return false;
     if (noteFilter === 'Unsorted' && sorted) return false;
-    return noteTitle(file, analyses[file.id]).toLowerCase().includes(query.toLowerCase());
-  }), [files, analyses, projects, noteFilter, query]);
-  const shownProcesses = cards.filter((card) => {
-    const match = processFilter === 'Finished' ? card.status === 'completed' : card.status !== 'completed';
-    return match && card.title.toLowerCase().includes(query.toLowerCase());
-  });
+    return !query || noteTitle(file, analyses[file.id]).toLowerCase().includes(query.toLowerCase());
+  }), [files, analyses, noteProjectTitles, noteFilter, query]);
+  const shownQuickNotes = useMemo(() => quickNotes.filter((note) =>
+    processFilter !== 'Finished' && (!query || `${note.title} ${note.text}`.toLowerCase().includes(query.toLowerCase()))
+  ), [quickNotes, processFilter, query]);
+  const shownProcesses = useMemo(() => cards.filter((card) => {
+    const match = processFilter === 'All' || (processFilter === 'Finished' ? card.status === 'completed' : card.status !== 'completed');
+    return match && (!query || card.title.toLowerCase().includes(query.toLowerCase()));
+  }).sort((a, b) => {
+    const aDemo = isDemoAudioName(a.fileName);
+    const bDemo = isDemoAudioName(b.fileName);
+    return aDemo === bDemo ? b.modifiedAt - a.modifiedAt : aDemo ? 1 : -1;
+  }), [cards, processFilter, query]);
 
   const openNote = (file: LocalAudioFile, fromProjectId?: string) => { setReturnProjectId(fromProjectId ?? null); setSelected({ kind: 'note', id: file.id }); };
+  const openQuickNote = (note: LocalQuickNote) => setSelected({ kind: 'quickNote', id: note.id });
   const openProcess = (card: LocalAgentCard) => setSelected({ kind: 'process', id: card.id });
   const openProject = (project: LocalProject) => setSelected({ kind: 'project', id: project.id });
   const closeDetail = () => {
@@ -190,6 +230,14 @@ export function RingAppScreen() {
       await refresh();
     })() }
   ]);
+  const removeQuickNote = (note: LocalQuickNote) => Alert.alert('Delete voice command?', 'This removes the captured transcript from this device.', [
+    { text: 'Cancel', style: 'cancel' },
+    { text: 'Delete', style: 'destructive', onPress: () => void (async () => {
+      await deleteLocalQuickNote(note.id);
+      setSelected(null);
+      await refresh();
+    })() }
+  ]);
   const removeCard = (card: LocalAgentCard) => Alert.alert('Delete capture?', 'This removes the capture and its process from this device.', [
     { text: 'Cancel', style: 'cancel' },
     { text: 'Delete', style: 'destructive', onPress: () => void (async () => {
@@ -211,7 +259,7 @@ export function RingAppScreen() {
     await refresh();
   };
   const shareSelected = async () => {
-    const message = currentNote
+    const message = currentQuickNote ? currentQuickNote.text : currentNote
       ? [noteTitle(currentNote, currentAnalysis), currentAnalysis?.meetingNotes, currentAnalysis?.transcript].filter(Boolean).join('\n\n')
       : [currentCard?.title, currentCard?.output, currentCard?.transcript].filter(Boolean).join('\n\n');
     if (message) await Share.share({ message });
@@ -222,9 +270,12 @@ export function RingAppScreen() {
     setTab(next);
     setQuery('');
     setSearching(false);
-    if (next === 'processes') setProcessFilter(finishedProcesses.length ? 'Finished' : 'In progress');
+    setVisibleNotes(LIST_BATCH_SIZE);
+    setVisibleProcesses(LIST_BATCH_SIZE);
+    if (next === 'processes') setProcessFilter('All');
   };
   const currentNote = selected?.kind === 'note' ? files.find((file) => file.id === selected.id) : undefined;
+  const currentQuickNote = selected?.kind === 'quickNote' ? quickNotes.find((note) => note.id === selected.id) : undefined;
   const currentAnalysis = currentNote ? analyses[currentNote.id] : undefined;
   const currentCard = selected?.kind === 'process' ? cards.find((card) => card.id === selected.id) : undefined;
   const currentProject = selected?.kind === 'project' ? projects.find((project) => project.id === selected.id) : undefined;
@@ -241,7 +292,7 @@ export function RingAppScreen() {
         <ScrollView contentContainerStyle={s.detailContent}>
           <View style={s.detailTop}>
             <Pressable onPress={closeDetail} accessibilityLabel="Back"><ArrowLeft size={20} color={ink} /></Pressable>
-            <Text style={s.detailTopTitle} numberOfLines={1}>{currentNote ? noteTitle(currentNote, currentAnalysis) : currentProject?.title || currentCard?.title || 'Process'}</Text>
+            <Text style={s.detailTopTitle} numberOfLines={1}>{currentQuickNote?.title || (currentNote ? noteTitle(currentNote, currentAnalysis) : currentProject?.title || currentCard?.title || 'Process')}</Text>
             {currentProject ? <Pressable onPress={() => setProjectPicker(true)} accessibilityLabel="Add notes"><Plus size={20} color={ink} /></Pressable> : <Pressable onPress={() => void shareSelected()} accessibilityLabel="Share capture"><Share2 size={18} color={ink} /></Pressable>}
           </View>
           {currentProject ? <>
@@ -267,6 +318,11 @@ export function RingAppScreen() {
               {currentCard.summary || currentCard.output || 'This capture is ready for processing.'}
             </Text>
           </View> : null}
+          {currentQuickNote ? <>
+            <View style={s.noteMetaRow}><Text style={s.hint}>{dateLabel(currentQuickNote.createdAt)}</Text><Text style={s.hint}>Voice command</Text></View>
+            <View style={s.noteContentCard}><Text style={s.overviewTitle}>Captured command</Text><Text style={s.noteContentText}>{currentQuickNote.text}</Text></View>
+            <Pressable style={s.utilityAction} onPress={() => removeQuickNote(currentQuickNote)}><Trash2 color={red} size={17} /><Text style={s.utilityText}>Delete</Text></Pressable>
+          </> : null}
           {currentNote ? (
             <>
               <View style={s.noteMetaRow}><Text style={s.hint}>{dateLabel(currentNote.modifiedAt)}</Text><Text style={s.hint}>{noteProjects.length ? 'Sorted' : 'Unsorted'}</Text></View>
@@ -353,7 +409,7 @@ export function RingAppScreen() {
             ) : (
               <>
                 <View style={s.header}>
-                  {searching ? <TextInput autoFocus value={query} onChangeText={setQuery} placeholder={`Search ${tab}`} placeholderTextColor={muted} style={s.searchInput} /> : <Text style={s.pageTitle}>{tab === 'notes' ? 'Notes' : 'Processes'}</Text>}
+                  {searching ? <TextInput autoFocus value={query} onChangeText={(value) => { setQuery(value); setVisibleNotes(LIST_BATCH_SIZE); setVisibleProcesses(LIST_BATCH_SIZE); }} placeholder={`Search ${tab}`} placeholderTextColor={muted} style={s.searchInput} /> : <Text style={s.pageTitle}>{tab === 'notes' ? 'Notes' : 'Processes'}</Text>}
                    {tab === 'notes' && <Pressable onPress={() => setProjectModal(true)} accessibilityLabel="Add project"><Plus color={ink} size={22} /></Pressable>}
                   <Pressable onPress={() => { setSearching(!searching); setQuery(''); }} accessibilityLabel="Search"><Search color={ink} size={21} /></Pressable>
                 </View>
@@ -369,21 +425,24 @@ export function RingAppScreen() {
                         </Pressable>
                       )) : <Text style={s.emptyText}>Create a project to group related notes.</Text>}
                     </ScrollView>
-                    <View style={s.sectionRow}><Text style={s.sectionTitle}>Recent notes</Text><Pressable onPress={() => setNoteFilter('All')} accessibilityLabel="Show all notes"><ArrowRight color={muted} size={18} /></Pressable></View>
+                    <View style={s.sectionRow}><Text style={s.sectionTitle}>Recent notes</Text><Pressable onPress={() => { setNoteFilter('All'); setVisibleNotes(LIST_BATCH_SIZE); }} accessibilityLabel="Show all notes"><ArrowRight color={muted} size={18} /></Pressable></View>
                     <View style={s.listPanel}>
-                       <View style={s.filterRow}>{(['All', 'Unsorted', 'Sorted'] as NoteFilter[]).map((filter) => <Chip key={filter} label={filter} selected={noteFilter === filter} onPress={() => setNoteFilter(filter)} />)}</View>
-                      {shownNotes.length ? shownNotes.map((file, index) => <View key={file.id}>
+                       <View style={s.filterRow}>{(['All', 'Unsorted', 'Sorted'] as NoteFilter[]).map((filter) => <Chip key={filter} label={filter} selected={noteFilter === filter} onPress={() => { setNoteFilter(filter); setVisibleNotes(LIST_BATCH_SIZE); }} />)}</View>
+                      {shownNotes.length ? shownNotes.slice(0, visibleNotes).map((file, index) => <View key={file.id}>
                         {(index === 0 || dayKey(file.modifiedAt) !== dayKey(shownNotes[index - 1].modifiedAt)) && <Text style={s.dateHeading}>{dateLabel(file.modifiedAt)}</Text>}
-                         <Pressable style={s.listRow} onPress={() => openNote(file)}><View style={[s.colorBar, { backgroundColor: [orange, violet, red, mint][index % 4] }]} /><View style={s.grow}><Text style={s.rowTitle} numberOfLines={1}>{noteTitle(file, analyses[file.id])}</Text><Text style={s.rowSub} numberOfLines={1}>{projects.filter((project) => project.noteIds.includes(file.id)).map((project) => project.title).join(', ') || 'Unsorted'} · {analyses[file.id]?.status === 'completed' ? 'Summary ready' : 'To process'}</Text></View><ChevronRight color={muted} size={16} /></Pressable>
+                         <Pressable style={s.listRow} onPress={() => openNote(file)}><View style={[s.colorBar, { backgroundColor: [orange, violet, red, mint][index % 4] }]} /><View style={s.grow}><Text style={s.rowTitle} numberOfLines={1}>{noteTitle(file, analyses[file.id])}</Text><Text style={s.rowSub} numberOfLines={1}>{noteProjectTitles.get(file.id)?.join(', ') || 'Unsorted'} · {analyses[file.id]?.status === 'completed' ? 'Summary ready' : 'To process'}</Text></View><ChevronRight color={muted} size={16} /></Pressable>
                       </View>) : <Text style={s.emptyText}>No notes match this view.</Text>}
+                      {shownNotes.length > visibleNotes && <Pressable style={s.moreButton} onPress={() => setVisibleNotes((count) => count + LIST_BATCH_SIZE)}><Text style={s.moreButtonText}>Show more notes</Text></Pressable>}
                     </View>
                   </>
                 ) : (
                   <>
                     <Text style={s.sectionTitle}>Processes</Text>
                     <View style={s.listPanel}>
-                      <View style={s.filterRow}><Chip label="In progress" selected={processFilter === 'In progress'} onPress={() => setProcessFilter('In progress')} /><Chip label="Finished" selected={processFilter === 'Finished'} onPress={() => setProcessFilter('Finished')} /></View>
-                      {shownProcesses.length ? shownProcesses.map((card) => <Pressable key={card.id} style={s.listRow} onPress={() => openProcess(card)}><View style={[s.colorBar, { backgroundColor: processColor(card.status) }]} /><View style={s.grow}><Text style={s.rowTitle} numberOfLines={1}>{card.title}</Text><Text style={[s.rowSub, { color: processColor(card.status) }]}>{statusLabel(card.status)} · {card.category}</Text></View><ChevronRight color={muted} size={16} /></Pressable>) : <Text style={s.emptyText}>No processes in this view.</Text>}
+                      <View style={s.filterRow}>{(['All', 'In progress', 'Finished'] as ProcessFilter[]).map((filter) => <Chip key={filter} label={filter} selected={processFilter === filter} onPress={() => { setProcessFilter(filter); setVisibleProcesses(LIST_BATCH_SIZE); }} />)}</View>
+                      {shownProcesses.length ? shownProcesses.slice(0, visibleProcesses).map((card) => <Pressable key={card.id} style={s.listRow} onPress={() => openProcess(card)}><View style={[s.colorBar, { backgroundColor: processColor(card.status) }]} /><View style={s.grow}><Text style={s.rowTitle} numberOfLines={1}>{card.title}</Text><Text style={[s.rowSub, { color: processColor(card.status) }]}>{statusLabel(card.status)} · {card.category}</Text></View><ChevronRight color={muted} size={16} /></Pressable>) : !shownQuickNotes.length ? <Text style={s.emptyText}>No processes in this view.</Text> : null}
+                      {shownQuickNotes.slice(0, Math.max(0, visibleProcesses - shownProcesses.length)).map((note) => <Pressable key={note.id} style={s.listRow} onPress={() => openQuickNote(note)}><View style={[s.colorBar, { backgroundColor: red }]} /><View style={s.grow}><Text style={s.rowTitle} numberOfLines={1}>{note.title}</Text><Text style={[s.rowSub, { color: red }]}>Captured · older text-only command</Text></View><ChevronRight color={muted} size={16} /></Pressable>)}
+                      {shownQuickNotes.length + shownProcesses.length > visibleProcesses && <Pressable style={s.moreButton} onPress={() => setVisibleProcesses((count) => count + LIST_BATCH_SIZE)}><Text style={s.moreButtonText}>Show more processes</Text></Pressable>}
                     </View>
                     <Pressable style={s.processAction} disabled={busy || !cards.some((card) => card.status === 'pending' || card.status === 'failed')} onPress={() => void processAll()}><Plus color={ink} size={18} /><Text style={s.quickText}>{busy ? 'Processing…' : 'Process all pending captures'}</Text><ChevronRight color={muted} size={16} /></Pressable>
                   </>
@@ -493,6 +552,7 @@ const s = StyleSheet.create({
   header: { flexDirection: 'row', alignItems: 'center', gap: 17, minHeight: 52, marginBottom: 22 }, pageTitle: { color: ink, fontSize: 21, fontWeight: '800', flex: 1 }, searchInput: { flex: 1, color: ink, borderBottomWidth: 1, borderBottomColor: '#777', padding: 4 },
   projectStrip: { backgroundColor: panel, borderRadius: 18, minHeight: 111, marginBottom: 27 }, projectStripContent: { flexDirection: 'row', alignItems: 'center', gap: 9, padding: 13, minHeight: 111 }, projectItem: { width: 101, alignItems: 'center', justifyContent: 'center' }, projectTitle: { color: ink, fontSize: 9, fontWeight: '700', textAlign: 'center', marginTop: 5, minHeight: 22 }, projectRule: { height: 3, width: '65%', backgroundColor: '#8b9292', borderRadius: 2, marginTop: 6 }, projectStatus: { fontSize: 8, marginTop: 5, fontWeight: '700' },
   listPanel: { backgroundColor: panel, borderRadius: 18, padding: 15, minHeight: 310 }, filterRow: { flexDirection: 'row', gap: 8, marginBottom: 17 },
+  moreButton: { alignItems: 'center', paddingVertical: 15 }, moreButtonText: { color: mint, fontSize: 12, fontWeight: '700' },
   chip: { borderWidth: 1, borderColor: '#777d7d', paddingHorizontal: 13, paddingVertical: 5, borderRadius: 99 }, chipSelected: { backgroundColor: '#e3e5e4', borderColor: '#e3e5e4' }, chipText: { color: '#c7caca', fontSize: 9, fontWeight: '700' }, chipTextSelected: { color: '#101415' },
   dateHeading: { color: ink, fontSize: 10, fontWeight: '800', marginTop: 3, marginBottom: 7 }, listRow: { minHeight: 53, flexDirection: 'row', alignItems: 'center', gap: 12, paddingHorizontal: 8 }, colorBar: { width: 2, height: 17, borderRadius: 1, marginRight: 25 },
   processAction: { flexDirection: 'row', alignItems: 'center', gap: 9, padding: 16, backgroundColor: panel, borderRadius: 16, marginTop: 13 },

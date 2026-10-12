@@ -39,6 +39,18 @@ const DEMO_CUSTOMER_DISCOVERY_DURATION_MS = 50_600;
 const DEMO_APPLE_DURATION_MS = 3_700;
 const DEMO_TRAVEL_DURATION_MS = 6_700;
 const DEMO_IDEA_DURATION_MS = 10_500;
+const DEMO_DURATIONS = new Map([
+  [DEMO_RECORDING_NAME, DEMO_RECORDING_DURATION_MS],
+  [DEMO_WEEKLY_SYNC_NAME, DEMO_WEEKLY_SYNC_DURATION_MS],
+  [DEMO_CUSTOMER_DISCOVERY_NAME, DEMO_CUSTOMER_DISCOVERY_DURATION_MS],
+  [DEMO_AGENT_APPLE_NAME, DEMO_APPLE_DURATION_MS],
+  [DEMO_AGENT_TRAVEL_NAME, DEMO_TRAVEL_DURATION_MS],
+  [DEMO_AGENT_IDEA_NAME, DEMO_IDEA_DURATION_MS]
+]);
+
+export function demoDurationMs(name: string): number | undefined {
+  return DEMO_DURATIONS.get(name);
+}
 const DEMO_RECORDING_MIN_BYTES = 200_000;
 const DEMO_WEEKLY_SYNC_MIN_BYTES = 180_000;
 const DEMO_CUSTOMER_DISCOVERY_MIN_BYTES = 160_000;
@@ -276,6 +288,7 @@ export async function ensureDemoContent(): Promise<void> {
   await FileSystem.makeDirectoryAsync(RECORDING_DIR, { intermediates: true });
 
   const force = await shouldForceReseed();
+  if (!force) return;
 
   const recordingSeeds: DemoRecordingSeed[] = [
     {

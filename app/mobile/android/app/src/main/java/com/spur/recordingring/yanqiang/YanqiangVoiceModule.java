@@ -9,6 +9,7 @@ import android.content.Context;
 import android.content.Intent;
 import android.content.SharedPreferences;
 import android.content.pm.PackageManager;
+import android.net.Uri;
 import android.os.Handler;
 import android.os.Looper;
 import android.provider.Settings;
@@ -20,6 +21,7 @@ import androidx.annotation.Nullable;
 import com.eiot.aizo.sdk.callback.AizoDeviceConnectCallback;
 import com.eiot.ringsdk.ServiceSdkCommandV2;
 import com.eiot.ringsdk.bean.ExBluetoothDevice;
+import com.eiot.ringsdk.bean.DeviceSmartTouchMode;
 import com.eiot.ringsdk.bean.FileUploadStateBean;
 import com.eiot.ringsdk.bean.OpusFileBean;
 import com.eiot.ringsdk.bean.SmartTouchEventModel;
@@ -31,6 +33,7 @@ import com.eiot.ringsdk.bean.devicesetting.VoiceRecordParam;
 import com.eiot.ringsdk.bean.devicesetting.VoiceRecordSettingResult;
 import com.eiot.ringsdk.callback.BCallback;
 import com.eiot.ringsdk.callback.DeviceStorageStateCallback;
+import com.eiot.ringsdk.callback.DeviceSmartTouchModeCallback;
 import com.eiot.ringsdk.callback.DeviceWorkingStateCallback;
 import com.eiot.ringsdk.callback.OggFileCallback;
 import com.eiot.ringsdk.callback.OnBluetoothSearchListener;
@@ -82,14 +85,10 @@ public class YanqiangVoiceModule extends ReactContextBaseJavaModule {
   private volatile boolean connectionInProgress = false;
   private volatile long lastBackgroundReconnectAt = 0L;
   private volatile long lastDoubleClickAt = 0L;
-
   private final DeviceWorkingStateCallback workingStateCallback = new DeviceWorkingStateCallback() {
     @Override
     public void onState(@NonNull DeviceWorkingState state) {
       currentWorkingState = state.getState();
-      // Some firmware reports hold/release only as recording-state transitions. Do not treat the
-      // state=2 transition caused by a double-click as dictation; double-click keeps its original
-      // record-toggle behavior.
       if (state.getState() == 2 && System.currentTimeMillis() - lastDoubleClickAt > 900L) {
         RingDictationAccessibilityService.startFromRing();
       } else if (state.getState() == 4 && RingDictationAccessibilityService.isListening()) {
@@ -124,6 +123,7 @@ public class YanqiangVoiceModule extends ReactContextBaseJavaModule {
       }
     }
   };
+
 
   private final AizoDeviceConnectCallback connectCallback = new AizoDeviceConnectCallback() {
     @Override
@@ -211,6 +211,20 @@ public class YanqiangVoiceModule extends ReactContextBaseJavaModule {
     } catch (Throwable error) {
       Log.e(TAG, "unable to send dictation audio to Spur transcription", error);
       return false;
+    }
+  }
+
+  public static void emitQuickNoteSaved() {
+    YanqiangVoiceModule module = activeModule.get();
+    if (module != null) {
+      module.sendEvent("yanqiangQuickNoteSaved", Arguments.createMap());
+    }
+  }
+
+  public static void emitCommandCaptured() {
+    YanqiangVoiceModule module = activeModule.get();
+    if (module != null) {
+      module.sendEvent("yanqiangCommandCaptured", Arguments.createMap());
     }
   }
 
@@ -478,6 +492,41 @@ public class YanqiangVoiceModule extends ReactContextBaseJavaModule {
   @ReactMethod
   public void syncVoiceRecordings(Promise promise) {
     syncVoiceRecordingsInternal(promise);
+  }
+
+  @ReactMethod
+  public void showRingStatusNotification(String kind, String detail, Promise promise) {
+    try {
+      promise.resolve(RingStatusNotifications.show(
+          getReactApplicationContext(), kind == null ? "" : kind,
+          detail == null ? "" : detail));
+    } catch (Throwable error) {
+      Log.w(TAG, "unable to show ring result notification", error);
+      promise.reject("RING_NOTIFICATION_FAILED", rootErrorMessage(error), error);
+    }
+  }
+
+  @ReactMethod
+  public void getRingOverlayStatus(Promise promise) {
+    promise.resolve(RingResultOverlay.canShow(getReactApplicationContext()));
+  }
+
+  @ReactMethod
+  public void openRingOverlaySettings(Promise promise) {
+    try {
+      Intent intent = new Intent(Settings.ACTION_MANAGE_OVERLAY_PERMISSION,
+          Uri.parse("package:" + getReactApplicationContext().getPackageName()));
+      intent.addFlags(Intent.FLAG_ACTIVITY_NEW_TASK);
+      getReactApplicationContext().startActivity(intent);
+      promise.resolve(true);
+    } catch (Throwable error) {
+      promise.reject("RING_OVERLAY_SETTINGS_FAILED", rootErrorMessage(error), error);
+    }
+  }
+
+  @ReactMethod
+  public void previewRingOverlay(Promise promise) {
+    promise.resolve(RingResultOverlay.show(getReactApplicationContext(), "note"));
   }
 
   @ReactMethod

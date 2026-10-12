@@ -64,6 +64,10 @@ type YanqiangVoiceNativeModule = {
   getElevenLabsApiKey(packagedKey: string): Promise<string>
   queryVoiceRecordingSummary(): Promise<RecordingSummary>
   syncVoiceRecordings(): Promise<{ files: NativeFile[] }>
+  showRingStatusNotification?(kind: 'note' | 'process', detail: string): Promise<boolean>
+  getRingOverlayStatus?(): Promise<boolean>
+  openRingOverlaySettings?(): Promise<boolean>
+  previewRingOverlay?(): Promise<boolean>
   getVoiceRecordParam(): Promise<VoiceRecordParamResult>
   setVoiceRecordParam(
     bitrate: number,
@@ -95,6 +99,11 @@ export const YanqiangVoiceNative = {
     requireNative().getElevenLabsApiKey(packagedKey),
   queryVoiceRecordingSummary: () => requireNative().queryVoiceRecordingSummary(),
   syncVoiceRecordings: () => requireNative().syncVoiceRecordings(),
+  showRingStatusNotification: (kind: 'note' | 'process', detail: string) =>
+    native?.showRingStatusNotification?.(kind, detail) ?? Promise.resolve(false),
+  getRingOverlayStatus: () => native?.getRingOverlayStatus?.() ?? Promise.resolve(false),
+  openRingOverlaySettings: () => native?.openRingOverlaySettings?.() ?? Promise.resolve(false),
+  previewRingOverlay: () => native?.previewRingOverlay?.() ?? Promise.resolve(false),
   getVoiceRecordParam: () => requireNative().getVoiceRecordParam(),
   setVoiceRecordParam: (bitrate: number, volume: number, lightBrightness: number) =>
     requireNative().setVoiceRecordParam(bitrate, volume, lightBrightness),
@@ -113,6 +122,8 @@ export const YanqiangVoiceEventNames = {
   touch: 'yanqiangSmartTouchEvent',
   dictationAudio: 'yanqiangDictationAudioReady',
   dictationStream: 'yanqiangDictationStream',
+  quickNoteSaved: 'yanqiangQuickNoteSaved',
+  commandCaptured: 'yanqiangCommandCaptured',
 } as const
 
 function requireNative(): YanqiangVoiceNativeModule {
