@@ -2,7 +2,7 @@
   "expo": {
     "name": "spur",
     "slug": "recording-ring",
-    "version": "1.0.16",
+    "version": "1.0.28",
     "orientation": "portrait",
     "icon": "./assets/icon.png",
     "scheme": "recordingring",
@@ -26,7 +26,7 @@
     },
     "android": {
       "package": "com.spur.recordingring",
-      "versionCode": 18,
+      "versionCode": 30,
       "permissions": [
         "android.permission.BLUETOOTH_SCAN",
         "android.permission.BLUETOOTH_CONNECT",

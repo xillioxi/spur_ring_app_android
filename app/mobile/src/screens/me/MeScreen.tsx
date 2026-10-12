@@ -7,7 +7,7 @@ import { colors } from '@/theme/colors';
 import { t } from '@/locales';
 
 const FREE_MINUTES = 300;
-const APP_VERSION = '1.0.16';
+const APP_VERSION = '1.0.28';
 
 export function MeScreen() {
   const navigation = useNavigation();

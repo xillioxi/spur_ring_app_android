@@ -133,7 +133,7 @@ public final class RingDictationAccessibilityService extends AccessibilityServic
 
   @Override
   public void onAccessibilityEvent(AccessibilityEvent event) {
-    // Version 1.0.16 captures a Process and never edits the foreground app.
+    // This release preserves the 1.0.16 behavior: capture a Process and never edit the foreground app.
   }
 
   @Override public void onInterrupt() { cancelRecognition(); }
