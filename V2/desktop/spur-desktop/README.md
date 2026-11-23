@@ -1,4 +1,4 @@
-# Spur Desktop 0.3.0
+# Spur Desktop 0.3.1
 
 A Windows and macOS desktop app with a React/TypeScript interface, ElevenLabs speech
 recognition, a global dictation shortcut, and native Unicode text insertion.

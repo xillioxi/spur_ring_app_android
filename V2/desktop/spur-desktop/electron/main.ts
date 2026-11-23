@@ -305,6 +305,25 @@ async function verifyApp(): Promise<void> {
     await window!.webContents.executeJavaScript('new Promise(resolve => requestAnimationFrame(() => requestAnimationFrame(resolve)))');
     result.noRendererNode = await window!.webContents.executeJavaScript('typeof require === "undefined" && typeof process === "undefined"');
     result.ui = await window!.webContents.executeJavaScript('Boolean(document.querySelector("main")) && document.body.innerText.toLowerCase().includes("spur")');
+    const [originalWidth, originalHeight] = window!.getContentSize();
+    window!.setContentSize(1000, 720);
+    try {
+      result.dictationScroll = await window!.webContents.executeJavaScript(`(async () => {
+        await new Promise(resolve => requestAnimationFrame(() => requestAnimationFrame(resolve)));
+        const main = document.querySelector('main');
+        const activity = main.querySelector('.activity-toggle');
+        const belowFold = activity.getBoundingClientRect().bottom > innerHeight;
+        main.scrollTop = main.scrollHeight;
+        const bottom = activity.getBoundingClientRect().bottom;
+        if ((belowFold && main.scrollTop <= 0) || bottom > innerHeight || bottom <= 0) {
+          throw new Error('The Dictation page cannot scroll to its Activity button.');
+        }
+        main.scrollTop = 0;
+        return true;
+      })()`);
+    } finally {
+      window!.setContentSize(originalWidth, originalHeight);
+    }
     result.pcmWorklet = await window!.webContents.executeJavaScript(`(async () => {
       // Offline rendering exercises the real worklet without an output device,
       // which is not guaranteed to exist on a hosted macOS build runner.
