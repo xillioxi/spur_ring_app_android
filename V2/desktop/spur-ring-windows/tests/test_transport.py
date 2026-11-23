@@ -20,10 +20,10 @@ from unittest.mock import patch
 
 from spur_ring.protocol import (
     ACK_UUID, ADVERTISED_SERVICE_UUID, COMMAND_UUID, RESPONSE_UUID,
-    SECOND_RESPONSE_UUID, SERVICE_UUID, AuthenticationError, Packet, PacketCodec,
+    SECOND_COMMAND_UUID, SECOND_RESPONSE_UUID, SERVICE_UUID, AuthenticationError, Packet, PacketCodec,
     encode_packet, expected_password,
 )
-from spur_ring.transport import RingClient
+from spur_ring.transport import RingClient, RingDisconnectedError
 
 
 ADDRESS_A = "AA:BB:CC:DD:EE:01"
@@ -35,6 +35,13 @@ RAW = bytes.fromhex("01803E00000114000300E02E00000000F8FFFEF8FFFE")
 
 @dataclass
 class Behavior:
+    reported_files: int = 1
+    empty_transfer: bool = False
+    silent_inventory: bool = False
+    silent_stored: bool = False
+    realtime_only: bool = False
+    padded_request_only: bool = False
+    dedicated_file_channel: bool = False
     bad_challenge: bool = False
     auth_status: int = 1
     auto_auth: bool = True
@@ -63,6 +70,10 @@ class FakeServices:
             RESPONSE_UUID: SimpleNamespace(uuid=RESPONSE_UUID, properties=["notify"]),
             SECOND_RESPONSE_UUID: SimpleNamespace(uuid=SECOND_RESPONSE_UUID, properties=["notify"]),
         }
+        if behavior.dedicated_file_channel:
+            self.characteristics[SECOND_COMMAND_UUID] = SimpleNamespace(
+                uuid=SECOND_COMMAND_UUID, properties=["write-without-response"],
+                max_write_without_response_size=behavior.max_write_without_response_size)
         self.characteristics.pop(behavior.missing_characteristic, None)
 
     def get_service(self, uuid):
@@ -146,14 +157,33 @@ class FakeBleClient:
                                     + b";" + password.encode("ascii") + b";0;",
                                     command_type=self.behavior.binding_command_type)
             elif payload == b"\xAA\x13\x01":
-                self.notify(b"\xAA\x14" + struct.pack(">BHI", 1, 1, len(RAW)))
+                if self.behavior.silent_inventory:
+                    continue
+                count = self.behavior.reported_files
+                self.notify(b"\xAA\x14" + struct.pack(">BHI", 1, count, len(RAW) * count))
             elif payload.startswith(b"\x81\x63") and self.behavior.auto_touch_reply:
                 self.notify(b"\x81\x64" + bytes([self.behavior.touch_status]))
             elif payload.startswith(b"\xAC\x21"):
+                expected_request = bytes.fromhex('ac210101ffffffff00000001')
+                if self.behavior.padded_request_only:
+                    expected_request += bytes.fromhex('ffffffff')
+                if self.behavior.silent_stored or self.behavior.realtime_only or payload != expected_request:
+                    continue
+                if self.behavior.empty_transfer:
+                    self.notify(b"\xAC\x24" + struct.pack(">BIIQB", 1, 0xFFFFFFFF, 0, 0, 0))
+                    continue
                 file_header = struct.pack(">BIIIBHB", 1, STAMP, 1, 1, 1, len(RAW), 0)
                 self.notify(b"\xAC\x22" + file_header + b"\xFF" * 3 + b"\0\0" + RAW)
                 self.notify(b"\xAC\x24" + struct.pack(">BIIQB", 1, STAMP, 1, 0, 0))
-            elif payload.startswith(b"\xAC\x25") and payload[-1] == 1:
+            elif payload == bytes.fromhex("AC510101FFFFFFFF00000001"):
+                if self.behavior.realtime_only and not self.end_ack_files:
+                    audio = bytes.fromhex("F8FFFE") * 10
+                    header = bytes.fromhex("AC52016553F10000000001001E0100140003000C00020100")
+                    self.notify(header + audio, channel=SECOND_RESPONSE_UUID)
+                    self.notify(bytes.fromhex("AC54016553F10000000001"), channel=SECOND_RESPONSE_UUID)
+                else:
+                    self.notify(bytes.fromhex("AC5401FFFFFFFF00000000"))
+            elif payload in (bytes.fromhex("AC55016553F10001"), bytes.fromhex("AC25016553F10001")):
                 # Capture filesystem contents at the precise moment the ring
                 # receives success. A later-created file cannot satisfy this.
                 folder = self.owner.client.storage.recordings / "".join(
@@ -181,13 +211,20 @@ class TransportTests(unittest.IsolatedAsyncioTestCase):
             self.scanner_calls.append(kwargs)
             return self.advertisements
 
+        async def find_device_by_filter(match, **kwargs):
+            self.scanner_calls.append(kwargs)
+            for device, advertisement in self.advertisements.values():
+                if match(device, advertisement):
+                    return device
+            return None
+
         def make_client(device, **kwargs):
             instance = FakeBleClient(self, device, **kwargs)
             self.instances.append(instance)
             return instance
 
         module = ModuleType("bleak")
-        module.BleakScanner = SimpleNamespace(discover=discover)
+        module.BleakScanner = SimpleNamespace(discover=discover, find_device_by_filter=find_device_by_filter)
         module.BleakClient = make_client
         self.module_patch = patch.dict(sys.modules, {"bleak": module})
         self.module_patch.start()
@@ -482,6 +519,97 @@ class TransportTests(unittest.IsolatedAsyncioTestCase):
         self.assertTrue(self.client._authenticated)
         self.assertEqual(self.statuses()[-1], "connected")
 
+    async def test_link_loss_after_inventory_keeps_original_cause(self):
+        ring = await self.connect()
+        write = ring.write_gatt_char
+
+        async def drop_after_summary(characteristic, data, *, response):
+            await write(characteristic, data, response=response)
+            if ring.sent[-1][1].payload == bytes.fromhex('AA1301'):
+                await self.wait_until(lambda: self.client._summary_future.done())
+                await ring.disconnect()
+
+        with patch.object(ring, 'write_gatt_char', drop_after_summary):
+            with self.assertRaises(RingDisconnectedError):
+                await self.client.sync()
+        await self.wait_until(lambda: self.client._ble is None)
+        with self.assertRaises(RingDisconnectedError):
+            await self.client.sync()
+        await self.client.disconnect()
+        with self.assertRaisesRegex(RuntimeError, 'authenticate the ring first') as failure:
+            await self.client.sync()
+        self.assertNotIsInstance(failure.exception, RingDisconnectedError)
+
+    async def test_disconnect_during_transfer_is_reported_as_link_loss(self):
+        self.behaviors[ADDRESS_A] = Behavior(padded_request_only=True)
+        ring = await self.connect()
+        syncing = asyncio.create_task(self.client.sync())
+        await self.wait_until(lambda: any(p.payload.startswith(b'\xac\x21') for _, p in ring.sent))
+        await ring.disconnect()
+        with self.assertRaises(RingDisconnectedError):
+            await asyncio.wait_for(syncing, 2)
+        self.assertNotIn('connected', self.statuses()[self.statuses().index('syncing'):])
+
+    async def test_link_loss_before_binding_reply_is_retryable(self):
+        self.behaviors[ADDRESS_A] = Behavior(auto_auth=False)
+        await self.client.scan()
+        connecting = asyncio.create_task(self.client.connect(ADDRESS_A))
+        await self.wait_until(lambda: bool(self.instances) and self.instances[-1].binding_sent.is_set())
+        await self.instances[-1].disconnect()
+        with self.assertRaises(RingDisconnectedError):
+            await asyncio.wait_for(connecting, 2)
+        self.assertNotIn('connected', self.statuses())
+
+    async def test_drop_during_end_ack_still_reports_persisted_recording(self):
+        ring = await self.connect()
+        write = ring.write_gatt_char
+        reported_at_ack = []
+
+        async def drop_on_end_ack(characteristic, data, *, response):
+            if data[6:8] == bytes.fromhex('AC25'):
+                reported_at_ack.extend(e['file']['path'] for e in self.events if e['type'] == 'recording')
+                await ring.disconnect()
+                raise OSError('Bluetooth link closed during write')
+            await write(characteristic, data, response=response)
+
+        with patch.object(ring, 'write_gatt_char', drop_on_end_ack):
+            with self.assertRaises(RingDisconnectedError):
+                await asyncio.wait_for(self.client.sync(), 4)
+        [path] = reported_at_ack
+        self.assertIn(b'OpusHead', Path(path).read_bytes())
+        self.assertEqual([f['path'] for f in self.client.list_recordings()], [path])
+
+    async def test_manual_disconnect_during_sync_does_not_trigger_recovery(self):
+        self.behaviors[ADDRESS_A] = Behavior(silent_inventory=True)
+        ring = await self.connect()
+        syncing = asyncio.create_task(self.client.sync())
+        await self.wait_until(lambda: any(p.payload == bytes.fromhex('AA1301') for _, p in ring.sent))
+        await self.client.disconnect()
+        with self.assertRaisesRegex(RuntimeError, 'Connection closed') as failure:
+            await asyncio.wait_for(syncing, 2)
+        self.assertNotIsInstance(failure.exception, RingDisconnectedError)
+
+    async def test_bad_recording_packet_fails_only_that_sync(self):
+        self.behaviors[ADDRESS_A] = Behavior(padded_request_only=True)
+        ring = await self.connect()
+        syncing = asyncio.create_task(self.client.sync())
+        await self.wait_until(lambda: any(p.payload.startswith(b'\xac\x21') for _, p in ring.sent))
+        ring.notify(b'\xac\x22')
+        with self.assertRaisesRegex(RuntimeError, 'complete 24-byte header'):
+            await asyncio.wait_for(syncing, 2)
+        ring.behavior.padded_request_only = False
+        self.assertEqual(await self.client.sync(), {'reported': 1, 'received': 1})
+        self.assertEqual(ring.disconnect_count, 0)
+
+    async def test_unconfirmed_queue_fails_sync_and_keeps_session(self):
+        self.behaviors[ADDRESS_A] = Behavior(silent_stored=True)
+        ring = await self.connect()
+        with patch('spur_ring.transport.FIRST_PACKET_TIMEOUT', 0.01):
+            with self.assertRaisesRegex(RuntimeError, 'did not confirm its stored recording queue'):
+                await asyncio.wait_for(self.client.sync(), 6)
+        self.assertTrue(self.client._authenticated)
+        self.assertEqual(ring.disconnect_count, 0)
+
     async def test_ring_controls_never_arm_or_emit_capture_on_connect(self):
         ring = await self.connect()
         ring.notify(bytes.fromhex('81611A0B0C0F2C090103'))
@@ -564,6 +692,66 @@ class TransportTests(unittest.IsolatedAsyncioTestCase):
         await self.connect(ADDRESS_B)
         self.assertFalse(self.client._dictation_armed)
         self.assertFalse(self.client._touch_reporting_requested)
+
+    async def test_zero_summary_still_downloads_the_file_offered_by_the_ring(self):
+        self.behaviors[ADDRESS_A] = Behavior(reported_files=0)
+        ring = await self.connect()
+        ring.notify(bytes.fromhex('aa110100'))
+        await self.wait_until(lambda: self.client._working_state == 0)
+        self.assertEqual(await self.client.sync(), {'reported': 0, 'received': 1})
+        self.assertEqual(len(self.client.list_recordings()), 1)
+
+    async def test_vendor_recording_request_and_end_ack_use_secondary_channel(self):
+        self.behaviors[ADDRESS_A] = Behavior(dedicated_file_channel=True)
+        ring = await self.connect()
+        self.assertEqual((await self.client.sync())['received'], 1)
+        commands = {(packet.payload[:2], channel) for channel, packet in ring.sent}
+        self.assertEqual([packet.payload.hex() for _, packet in ring.sent if packet.payload[:2] == b'\xac\x21'],
+                         ['ac210101ffffffff00000001'])
+        for opcode in (b'\xac\x21', b'\xac\x25'):
+            self.assertIn((opcode, SECOND_COMMAND_UUID), commands)
+            self.assertNotIn((opcode, COMMAND_UUID), commands)
+        self.assertIn((b'\xaa\x13', COMMAND_UUID), commands)
+
+    async def test_confirmed_empty_transfer(self):
+        self.behaviors[ADDRESS_A] = Behavior(reported_files=0, empty_transfer=True)
+        await self.connect()
+        self.assertEqual(await self.client.sync(), {'reported': 0, 'received': 0})
+
+    async def test_older_ring_syncs_after_unanswered_compact_request(self):
+        self.behaviors[ADDRESS_A] = Behavior(padded_request_only=True)
+        ring = await self.connect()
+        with patch('spur_ring.transport.FIRST_PACKET_TIMEOUT', 0.01):
+            self.assertEqual((await self.client.sync())['received'], 1)
+        self.assertEqual([len(p.payload) for _, p in ring.sent if p.payload[:2] == b'\xac\x21'], [12, 16])
+        self.assertFalse(any(p.payload[:2] == b'\xac\x51' for _, p in ring.sent))
+
+    async def test_selected_address_finds_unnamed_ring_without_substituting_nearer_ring(self):
+        self.add_device(ADDRESS_B, None, [], -92)
+        found = await self.client.scan(ADDRESS_B.lower())
+        self.assertEqual([device['id'] for device in found], [ADDRESS_B])
+        self.assertEqual(self.scanner_calls, [{'timeout': 8}])
+        self.assertEqual(found[0]['rssi'], -92)
+        self.assertNotIn(ADDRESS_A, self.client._devices)
+        self.assertEqual(await self.client.scan('01:02:03:04:05:06'), [])
+        self.assertFalse(self.client._devices)
+
+    async def test_missing_inventory_and_silent_legacy_fall_back_to_realtime(self):
+        self.behaviors[ADDRESS_A] = Behavior(realtime_only=True, silent_inventory=True, dedicated_file_channel=True)
+        ring = await self.connect()
+        with patch('spur_ring.transport.FIRST_PACKET_TIMEOUT', 0.01), patch('spur_ring.transport.SUMMARY_TIMEOUT', 0.01):
+            self.assertEqual(await self.client.sync(), {'reported': None, 'received': 1})
+        self.assertEqual(len(ring.end_ack_files), 1)
+        self.assertIn(b'OpusHead', ring.end_ack_files[0][1])
+        self.assertIn((SECOND_COMMAND_UUID, bytes.fromhex('AC55016553F10001')),
+                      [(ch, p.payload) for ch, p in ring.sent])
+
+    async def test_short_transfer_preserves_saved_file_and_reports_missing(self):
+        self.behaviors[ADDRESS_A] = Behavior(reported_files=2)
+        await self.connect()
+        with self.assertRaisesRegex(RuntimeError, 'delivered 1'):
+            await self.client.sync()
+        self.assertEqual(len(self.client.list_recordings()), 1)
 
     async def test_two_rings_with_same_recording_timestamp_have_separate_folders(self):
         first = await self.connect()

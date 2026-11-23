@@ -23,11 +23,12 @@ BATTERY_QUERY = bytes.fromhex("3901")
 
 
 def request_recording(*, resume: bool = False, timestamp: int = 0xFFFFFFFF,
-                      start_packet: int = 1) -> bytes:
+                      start_packet: int = 1, padded: bool = True) -> bytes:
     """Build AC21; timestamp is wire Unix seconds, not SDK milliseconds."""
     if not 0 <= timestamp <= 0xFFFFFFFF or not 1 <= start_packet <= 0xFFFFFFFF:
         raise ValueError("Timestamp or start packet is outside the wire format")
-    return b"\xAC\x21" + struct.pack(">BBII", 2 if resume else 1, VOICE_DATA_TYPE, timestamp, start_packet) + b"\xFF" * 4
+    request = b"\xAC\x21" + struct.pack(">BBII", 2 if resume else 1, VOICE_DATA_TYPE, timestamp, start_packet)
+    return request + b"\xFF" * 4 if padded else request
 
 
 def packet_ack(data_type: int, timestamp: int, packet: int, success: bool) -> bytes:
@@ -173,10 +174,11 @@ class RecordingTransfer:
     """
     def __init__(self, output_dir: Path | str, *, max_file_bytes: int = 64 * 1024 * 1024,
                  max_packets: int = 100_000, max_session_bytes: int = 256 * 1024 * 1024,
-                 max_files_per_sync: int = 4096, checksum_policy: str = "ios"):
+                 max_files_per_sync: int = 4096, checksum_policy: str = "ios", padded_request: bool = True):
         if max_file_bytes < 16 or max_packets < 1 or max_session_bytes < 16 or max_files_per_sync < 1:
             raise ValueError("Transfer limits must be positive")
         self.output_dir = Path(output_dir)
+        self.padded_request = padded_request
         self.max_file_bytes = max_file_bytes
         self.max_packets = max_packets
         self.max_session_bytes = max_session_bytes
@@ -194,6 +196,10 @@ class RecordingTransfer:
         self._accepted_end: tuple[int, int, int] | None = None
         self._reset()
 
+    @property
+    def completed_files(self) -> int:
+        return self._session_files
+
     def _reset(self) -> None:
         self._identity: tuple[int, int] | None = None
         self._total = 0
@@ -208,10 +214,10 @@ class RecordingTransfer:
         self._session_bytes = 0
         self._session_files = 0
         if resume and self._identity is not None and self._packets:
-            return [request_recording(resume=True, timestamp=self._identity[1],
+            return [request_recording(padded=self.padded_request, resume=True, timestamp=self._identity[1],
                                       start_packet=min(max(self._packets) + 1, self._total))]
         self._reset()
-        return [request_recording()]
+        return [request_recording(padded=self.padded_request)]
 
     def stop(self) -> None:
         """Stop receiving without discarding the in-memory partial transfer."""
@@ -280,13 +286,15 @@ class RecordingTransfer:
             update.commands.append(end_ack(end.data_type, end.timestamp, True))
             return update
         if end.total_packets == 0:
+            if self._packets:
+                raise ValueError("The ring reported an empty queue during an incomplete recording download")
             empty = end.timestamp in (0, 0xFFFFFFFF)
             update.commands.append(end_ack(end.data_type, end.timestamp, empty))
             if not empty:
                 update.error = "The requested recording does not exist on the ring"
             if end.has_more:
                 self._reset()
-                update.commands.append(request_recording())
+                update.commands.append(request_recording(padded=self.padded_request))
             else:
                 update.finished = True
                 self.active = False
@@ -294,7 +302,7 @@ class RecordingTransfer:
         if self._identity != (end.data_type, end.timestamp) or end.total_packets != self._total:
             update.commands.append(end_ack(end.data_type, end.timestamp, False))
             self._reset()
-            update.commands.append(request_recording())
+            update.commands.append(request_recording(padded=self.padded_request))
             update.error = "AC24 does not match the cached recording; restarted transfer"
             return update
         self._end_seen = True
@@ -355,7 +363,7 @@ class RecordingTransfer:
         self._accepted_end = key
         self._reset()
         if end.has_more:
-            update.commands.append(request_recording())
+            update.commands.append(request_recording(padded=self.padded_request))
         else:
             self.active = False
             update.finished = True

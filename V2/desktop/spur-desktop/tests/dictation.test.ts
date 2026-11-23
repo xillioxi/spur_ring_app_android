@@ -15,7 +15,7 @@ const file = (path: string, timestamp: number): Recording => ({ id: path, name: 
 
 function harness(source: AudioSource = 'ring') {
   const state: AppState = {
-    version: 'test', connection: 'connected', ringName: 'AIZO-RING', devices: [], recordings: [],
+    version: 'test', connection: 'connected', ringName: 'AIZO-RING', devices: [], discovery: { status: 'idle' }, recordings: [],
     transcript: { committed: '', partial: '' },
     dictation: { status: 'idle', source, insertAtCursor: true, targetLabel: '', level: 0 },
     settings: { hasApiKey: true, language: 'auto', shortcut: 'Ctrl+Shift+Space', insertAtCursor: true, source },
@@ -36,6 +36,14 @@ function harness(source: AudioSource = 'ring') {
   const dictation = new Dictation(ports);
   return { state, calls, ports, dictation, target };
 }
+
+test('a global dictation start cannot take the ring while a recording sync is underway', async () => {
+  const { state, dictation, calls } = harness();
+  state.busy = 'syncing recordings';
+  await assert.rejects(dictation.start(0), /syncing recordings/);
+  assert.equal(dictation.active, false);
+  assert.deepEqual(calls, []);
+});
 
 test('textGap adds a boundary between English phrases without duplicating existing whitespace', () => {
   assert.equal(textGap('', 'hello'), '');

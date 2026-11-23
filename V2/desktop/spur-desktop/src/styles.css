@@ -19,3 +19,12 @@
 .page-header p,.hero-center p,.capture-status,.hero-shortcut>span:last-child,.hero-bottom span,.ring-panel>p,.flow-guide li p,.guide-tip p,.transcript-placeholder p,.transcript-placeholder p span,.transcript-footer,.workspace-footer>span,.field-help,.cloud-note p,.source-options small,.setting-toggle-row small,.settings-aside p,.settings-save-row>span,.library-empty>p,.empty-library-note{color:#526b65}
 .field-label,.source-options strong,.setting-toggle-row strong,.recording-table td,.recording-title strong{color:#35564c}
 .source-options small,.setting-toggle-row small,.field-help{font-size:10px}.status-pill,.ring-footnote,.section-overline,.sidebar-caption,.version{color:#62766f}
+
+.ring-scan-result { margin: 12px 20px; color: #354f4c; font-size: 13px; line-height: 1.5; }
+.nearby-actions { display: grid; justify-items: center; gap: 4px; }
+.nearby-actions .button { height: 30px; padding: 0 8px; font-size: 10px; }
+.nearby-device small { overflow-wrap: anywhere; }
+.ring-address { margin: 12px 20px; font-size: 12px; text-align: left; }
+.ring-address summary { cursor: pointer; }
+.ring-address label { display: grid; gap: 5px; margin-top: 8px; }
+.ring-address input { padding: 7px; border: 1px solid #bfcac6; border-radius: 5px; font: inherit; }

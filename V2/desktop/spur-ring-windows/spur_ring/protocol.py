@@ -257,6 +257,8 @@ def parse_binding_response(payload: bytes) -> BindingResponse:
 
 def validate_binding_response(request: BindingRequest, response: BindingResponse) -> None:
     """Require the ring's success status and preserve its device-type auth branch."""
+    if response.status == 0x23:
+        raise AuthenticationError("Ring rejected binding (0x23): it reports an existing binding to another device and is off the charger. Use the already-bound app to check for recordings before changing pairing.")
     if response.status != 1:
         raise AuthenticationError(f"ring rejected binding (vendor status {response.status}); no unbind was attempted")
     if not response.device_id or not 0 <= response.device_type <= 0x7FFFFFFF:

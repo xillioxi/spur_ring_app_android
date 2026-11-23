@@ -4,20 +4,34 @@ import { existsSync, mkdirSync, readFileSync, writeFileSync, renameSync } from '
 import { copyFile } from 'node:fs/promises';
 import path from 'node:path';
 import { pathToFileURL } from 'node:url';
-import type { AppState, Recording, Settings } from '../src/types';
+import type { AppState, Recording, RingDevice, Settings } from '../src/types';
 import { RingService } from './bridge';
 import { Dictation } from './dictation';
 import { transcribeFile } from './transcription';
 import { desktopEnvironment } from './platform';
+import { discoverRings } from './discovery';
+import { syncRingRecordings } from './ring-sync';
+import { audioTypes, importAudio, importedAudio } from './audio-import';
 
 protocol.registerSchemesAsPrivileged([{ scheme: 'spur', privileges: { standard: true, secure: true, supportFetchAPI: true, stream: true } }]);
 const selfTest = process.argv.includes('--self-test');
+const primaryInstance = selfTest || app.requestSingleInstanceLock();
+if (!primaryInstance) app.quit();
 const root = app.getAppPath();
 const environment = desktopEnvironment(process.platform, app.getPath('home'), app.getPath('appData'), process.env.LOCALAPPDATA);
 const dataRoot = environment.dataRoot;
+const importedRoot = path.join(dataRoot, 'recordings', 'aizo-imports');
 const settingsFile = path.join(dataRoot, 'desktop-ui.json');
 const keyFile = path.join(dataRoot, 'elevenlabs-key.bin');
 let window: BrowserWindow | undefined;
+if (!selfTest && primaryInstance) {
+  app.on('second-instance', () => {
+    if (!window || window.isDestroyed()) return;
+    if (window.isMinimized()) window.restore();
+    window.show();
+    window.focus();
+  });
+}
 let quitting = false;
 let diagnosticExitCode: number | undefined;
 let logSequence = 0;
@@ -25,7 +39,7 @@ let apiKey = '';
 let dictation: Dictation;
 const settings: Settings = { hasApiKey: false, language: 'auto', shortcut: environment.shortcut, insertAtCursor: true, source: 'ring', credentialStore: environment.credentialStore };
 const state: AppState = {
-  version: app.getVersion(), connection: 'disconnected', ringName: 'Your Spur Ring', devices: [], recordings: [],
+  version: app.getVersion(), connection: 'disconnected', ringName: 'Your Spur Ring', devices: [], discovery: { status: 'idle' }, recordings: [],
   transcript: { committed: '', partial: '' },
   dictation: { status: 'idle', source: 'ring', insertAtCursor: true, targetLabel: '', level: 0 },
   settings, service: { ready: false }, logs: [], progress: 0, busy: null, platform: environment.mac ? 'macos' : 'windows',
@@ -61,8 +75,12 @@ function loadSettings(): void {
 const service = new RingService(event => {
   if (event.type === 'status') {
     state.connection = event.status;
+    if (event.status === 'syncing') state.syncRetryAddress = undefined;
     if (event.status === 'disconnected' && dictation?.active) void dictation.fail(new Error('The ring disconnected. Dictation stopped; your transcript is retained.'));
     if (event.message) log(event.message);
+  } else if (event.type === 'sync-retry') {
+    state.syncRetryAddress = event.address;
+    state.progress = 0;
   } else if (event.type === 'log') log(event.message);
   else if (event.type === 'error') log(event.message, true);
   else if (event.type === 'progress') state.progress = event.progress;
@@ -75,28 +93,29 @@ const service = new RingService(event => {
   changed();
 }, message => {
   state.service = { ready: false, error: message }; state.connection = 'disconnected';
+  state.devices = []; state.discovery = { status: 'failed', message };
   if (!quitting) { log(message, true); if (dictation?.active) void dictation.fail(new Error(message)); }
 });
-function toRecording(raw: any): Recording | undefined {
+function toRecording(raw: any, imported = false): Recording | undefined {
   if (!raw || typeof raw.path !== 'string' || typeof raw.name !== 'string') return;
   const absolute = path.resolve(raw.path);
-  const relative = path.relative(path.join(dataRoot, 'recordings'), absolute);
-  if (relative.startsWith('..') || path.isAbsolute(relative) || !absolute.endsWith('.ogg')) return;
+  const relative = path.relative(imported ? importedRoot : path.join(dataRoot, 'recordings'), absolute);
+  if (relative.startsWith('..') || path.isAbsolute(relative)) return;
+  if (!imported && relative.split(path.sep)[0] === 'aizo-imports') return;
+  if (imported ? !Object.hasOwn(audioTypes, path.extname(absolute).slice(1).toLowerCase()) : !absolute.endsWith('.ogg')) return;
   const id = createHash('sha256').update(absolute.toLowerCase()).digest('hex').slice(0, 24);
   let transcript: string | undefined;
   try { const saved = JSON.parse(readFileSync(absolute + '.transcript.json', 'utf8')); if (typeof saved.text === 'string') transcript = saved.text; } catch {}
   return { id, name: raw.name, path: absolute, size: Number(raw.size), timestamp: Number(raw.timestamp), transcript };
 }
 async function refreshLibrary(): Promise<void> {
-  const recordings = await service.request<any[]>('listRecordings');
-  state.recordings = recordings.map(toRecording).filter((file): file is Recording => Boolean(file));
+  const [recordings, imports] = await Promise.all([service.request<any[]>('listRecordings'), importedAudio(importedRoot)]);
+  state.recordings = [...recordings.map(file => toRecording(file)), ...imports.map(file => toRecording(file, true))]
+    .filter((file): file is Recording => Boolean(file)).sort((a, b) => b.timestamp - a.timestamp);
   changed();
 }
-async function sync(): Promise<void> {
-  if (state.busy) throw new Error(`Wait until ${state.busy} finishes.`);
-  state.busy = 'syncing recordings'; changed();
-  try { await service.request('sync', {}, 240000); await refreshLibrary(); }
-  finally { state.busy = null; changed(); }
+function sync(selected?: RingDevice): Promise<void> {
+  return syncRingRecordings({ state, request: service.request.bind(service), refreshLibrary, log, changed }, selected);
 }
 async function transcribe(file: Recording, signal?: AbortSignal): Promise<string> {
   if (!apiKey) throw new Error('Add your ElevenLabs API key in Settings first.');
@@ -150,25 +169,56 @@ async function command(method: unknown, argument?: unknown): Promise<unknown> {
     case 'getState': return state;
     case 'scan': {
       if (state.busy || dictation.active) throw new Error('Finish the current operation before scanning.');
-      state.busy = 'scanning'; changed();
-      try { state.devices = await service.request('scan'); } finally { state.busy = null; changed(); }
+      state.busy = 'scanning'; state.devices = []; state.discovery = { status: 'searching' }; changed();
+      try {
+        state.devices = await discoverRings(() => service.request('scan', { address: argument }), () => {
+          state.discovery = { status: 'retrying' }; changed();
+        });
+        state.discovery = { status: 'complete' };
+      } catch (error) {
+        state.discovery = { status: 'failed', message: error instanceof Error ? error.message : 'Bluetooth discovery failed.' };
+        throw error;
+      } finally { state.busy = null; changed(); }
       return;
     }
-    case 'connect': {
+    case 'connect':
+    case 'connectAndSync': {
       if (state.busy || dictation.active) throw new Error('Finish the current operation first.');
       const device = state.devices.find(device => device.id === argument);
-      if (!device) throw new Error('Scan and select your ring first.');
+      if (!device?.compatible) throw new Error('Scan and select a compatible ring first.');
+      if (state.connection !== 'disconnected') throw new Error('Disconnect the current ring before selecting another.');
+      if (method === 'connectAndSync') return sync(device);
       state.busy = 'connecting'; changed();
-      try { await service.request('connect', { address: device.id }, 95000); state.ringName = device.name; }
+      try {
+        await service.request('connect', { address: device.id }, 95000);
+        state.ringName = device.name;
+        state.ringAddress = device.id;
+        state.lastSync = undefined;
+      }
       finally { state.busy = null; changed(); }
       return;
     }
     case 'disconnect': await dictation.stop(); await service.request('disconnect'); return;
     case 'sync': if (dictation.active) throw new Error('Disarm dictation before a manual sync.'); return sync();
     case 'openRecording': { const error = await shell.openPath(selectedFile(argument).path); if (error) throw new Error(error); return; }
+    case 'importRecordings': {
+      if (state.busy || dictation.active) throw new Error('Finish the current operation before importing audio.');
+      state.busy = 'importing recordings'; state.importNotice = undefined; changed();
+      try {
+        const selected = await dialog.showOpenDialog(window!, { title: 'Import audio exported from AIZO',
+          properties: ['openFile', 'multiSelections'], filters: [{ name: 'Audio files', extensions: Object.keys(audioTypes) }] });
+        if (selected.canceled) return;
+        let added = 0;
+        for (const file of selected.filePaths) if (await importAudio(file, importedRoot)) added++;
+        state.importNotice = `Imported ${added} recording(s). ${selected.filePaths.length - added} already in your library.`;
+      } finally {
+        try { await refreshLibrary(); } finally { state.busy = null; changed(); }
+      }
+      return;
+    }
     case 'exportRecording': {
       const file = selectedFile(argument);
-      const result = await dialog.showSaveDialog(window!, { defaultPath: file.name, filters: [{ name: 'Ogg Opus recording', extensions: ['ogg'] }] });
+      const result = await dialog.showSaveDialog(window!, { defaultPath: file.name, filters: [{ name: 'Audio recording', extensions: [path.extname(file.path).slice(1)] }] });
       if (!result.canceled && result.filePath) await copyFile(file.path, result.filePath);
       return;
     }
@@ -281,6 +331,26 @@ async function verifyApp(): Promise<void> {
         return verified;
       } finally { clearTimeout(timer); node?.disconnect(); node?.port.close(); }
     })()`, true);
+    if (process.argv.includes('--test-scan')) {
+      result.discovery = await window!.webContents.executeJavaScript(`(async () => {
+        const panel = document.querySelector('[aria-label="Ring connection"]');
+        const button = panel?.querySelector('.ring-primary-actions button');
+        if (!button || button.disabled) throw new Error('Find your ring is unavailable.');
+        button.click();
+        const deadline = Date.now() + 65000;
+        while (Date.now() < deadline) {
+          const status = panel.querySelector('[data-discovery]')?.dataset.discovery;
+          if (status === 'failed') throw new Error(panel.querySelector('[data-discovery]').textContent);
+          if (status === 'complete') {
+            const devices = Array.from(panel.querySelectorAll('.nearby-device'));
+            return { count: devices.length, aizoVisible: devices.some(row => /AIZO[ -]?RING/i.test(row.querySelector('strong')?.textContent || '')),
+              selectable: devices.filter(row => row.querySelector('button:not(:disabled)')).length };
+          }
+          await new Promise(resolve => setTimeout(resolve, 100));
+        }
+        throw new Error('Find your ring did not display a scan result.');
+      })()`);
+    }
     const testRing = process.argv.indexOf('--test-ring');
     if (testRing >= 0) {
       await command('scan');
@@ -289,9 +359,16 @@ async function verifyApp(): Promise<void> {
       result.ringAuthenticated = state.connection === 'connected';
       await command('disconnect');
     }
+    await window!.webContents.executeJavaScript('new Promise(resolve => requestAnimationFrame(() => requestAnimationFrame(resolve)))');
     const screenshot = await window!.webContents.capturePage();
     mkdirSync(path.dirname(reportPath), { recursive: true });
     writeFileSync(path.join(path.dirname(reportPath), 'desktop-preview.png'), screenshot.toPNG());
+    result.importAvailableOffline = await window!.webContents.executeJavaScript(`(async () => {
+      [...document.querySelectorAll('button')].find(button => button.textContent.trim().startsWith('Recordings'))?.click();
+      await new Promise(resolve => requestAnimationFrame(() => requestAnimationFrame(resolve)));
+      return [...document.querySelectorAll('button')].some(button => button.textContent === 'Import from AIZO' && !button.disabled);
+    })()`);
+    if (!result.importAvailableOffline) throw new Error('The recording import button is unavailable while disconnected.');
     result.settingsUI = await window!.webContents.executeJavaScript(`(async () => {
       const button = [...document.querySelectorAll('button')].find(button => button.textContent.trim() === 'Settings');
       button?.click();
@@ -307,6 +384,7 @@ async function verifyApp(): Promise<void> {
 }
 
 app.whenReady().then(async () => {
+  if (!primaryInstance) return;
   loadSettings();
   if (environment.mac) Menu.setApplicationMenu(Menu.buildFromTemplate([
     { label: 'Spur Desktop', submenu: [{ role: 'about' }, { type: 'separator' }, { role: 'hide' }, { role: 'hideOthers' }, { role: 'unhide' }, { type: 'separator' }, { role: 'quit' }] },

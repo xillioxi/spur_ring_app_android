@@ -1,14 +1,20 @@
 export type AudioSource = 'ring' | 'microphone' | 'ring-recording';
 export type ConnectionStatus = 'disconnected' | 'connecting' | 'authenticating' | 'connected' | 'syncing';
 export interface RingDevice { id: string; name: string; rssi: number; compatible: boolean }
+export type Discovery = { status: 'idle' | 'searching' | 'retrying' | 'complete' } | { status: 'failed'; message: string };
 export interface Recording { id: string; name: string; path: string; size: number; timestamp: number; transcript?: string }
 export interface Settings { hasApiKey: boolean; language: string; shortcut: string; insertAtCursor: boolean; source: AudioSource; credentialStore?: string }
 export interface AppState {
   version: string;
   connection: ConnectionStatus;
   ringName: string;
+  ringAddress?: string;
   devices: RingDevice[];
+  discovery: Discovery;
   recordings: Recording[];
+  lastSync?: string;
+  syncRetryAddress?: string;
+  importNotice?: string;
   transcript: { committed: string; partial: string };
   dictation: { status: 'idle' | 'armed' | 'starting' | 'listening' | 'stopping' | 'error'; source: AudioSource; insertAtCursor: boolean; targetLabel: string; error?: string; level: number };
   settings: Settings;
@@ -22,10 +28,12 @@ export interface AppState {
 export interface SpurAPI {
   getState(): Promise<AppState>;
   onState(callback: (state: AppState) => void): () => void;
-  scan(): Promise<void>;
+  scan(address?: string): Promise<void>;
   connect(id: string): Promise<void>;
+  connectAndSync(id: string): Promise<void>;
   disconnect(): Promise<void>;
   sync(): Promise<void>;
+  importRecordings(): Promise<void>;
   openRecording(id: string): Promise<void>;
   exportRecording(id: string): Promise<void>;
   openFolder(): Promise<void>;

@@ -1,5 +1,7 @@
 import WebSocket from 'ws';
 import { readFile, stat } from 'node:fs/promises';
+import path from 'node:path';
+import { audioTypes } from './audio-import';
 
 export function realtimeURL(language: string): string {
   const url = new URL('wss://api.elevenlabs.io/v1/speech-to-text/realtime');
@@ -118,7 +120,8 @@ export async function transcribeFile(file: string, key: string, language: string
   if (details.size > 64 * 1024 * 1024) throw new Error('This recording exceeds the 64 MB transcription limit.');
   const audio = await readFile(file);
   const body = new FormData();
-  body.set('file', new Blob([audio], { type: 'audio/ogg' }), 'recording.ogg');
+  const ext = path.extname(file).slice(1).toLowerCase();
+  body.set('file', new Blob([audio], { type: audioTypes[ext] }), `recording.${ext}`);
   body.set('model_id', 'scribe_v2');
   body.set('tag_audio_events', 'false');
   body.set('diarize', 'false');

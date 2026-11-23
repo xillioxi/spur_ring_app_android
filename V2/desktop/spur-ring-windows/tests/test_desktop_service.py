@@ -6,9 +6,10 @@ import json
 from pathlib import Path
 import tempfile
 import unittest
-from unittest.mock import patch
+from unittest.mock import AsyncMock, patch
 
 from spur_ring.desktop_service import DesktopService, MAX_LINE_BYTES, default_data_dir
+from spur_ring.transport import RingDisconnectedError
 
 
 class FakeClient:
@@ -34,6 +35,7 @@ class FakeClient:
 
     async def sync(self):
         self.calls.append("sync")
+        return {"reported": 1, "received": 1}
 
     async def arm_dictation(self):
         self.calls.append("arm")
@@ -72,6 +74,55 @@ class DesktopServiceTests(unittest.IsolatedAsyncioTestCase):
         result = await self.request("sync")
         self.assertEqual(result["result"][0]["name"], "voice.ogg")
         self.assertEqual(self.service.client.calls, [("connect", "AA:BB"), "sync"])
+
+    async def test_connect_and_sync_immediately_pulls_from_the_selected_ring(self):
+        result = await self.request("connectAndSync", {"address": "AA:BB"})
+        self.assertEqual(result["result"], {"reported": 1, "received": 1})
+        self.assertEqual(self.service.client.calls, [("connect", "AA:BB"), "sync"])
+
+    async def test_link_loss_reconnects_to_same_ring_once_and_counts_distinct_files(self):
+        client = self.service.client
+        await self.request("connect", {"address": "AA:BB"})
+        async def sync():
+            client.calls.append("sync")
+            if client.calls.count("sync") == 1:
+                client.on_event({"type": "recording", "file": {"path": "a.ogg"}})
+                raise RingDisconnectedError()
+            for path in ("a.ogg", "b.ogg"):
+                client.on_event({"type": "recording", "file": {"path": path}})
+            return {"reported": 2, "received": 2}
+        with patch.object(client, "sync", sync):
+            result = await self.request("syncRecordings")
+        self.assertEqual(result["result"]["received"], 2)
+        self.assertEqual(client.calls, [("connect", "AA:BB"), "sync", "disconnect", ("connect", "AA:BB"), "sync"])
+
+    async def test_repeated_drop_stops_and_protocol_errors_do_not_retry(self):
+        client = self.service.client
+        with patch.object(client, "sync", AsyncMock(side_effect=RingDisconnectedError())) as sync:
+            result = await self.request("connectAndSync", {"address": "AA:BB"})
+        self.assertIn("disconnected", result["error"])
+        self.assertEqual(sync.await_count, 2)
+        client.calls.clear()
+        with patch.object(client, "sync", AsyncMock(side_effect=RuntimeError("No file reply"))) as sync:
+            result = await self.request("syncRecordings")
+        self.assertIn("No file reply", result["error"])
+        sync.assert_awaited_once()
+        self.assertEqual(client.calls, [])
+
+    async def test_explicit_disconnect_cancels_transfer_without_reconnecting(self):
+        client = self.service.client
+        started = asyncio.Event()
+        async def sync():
+            started.set()
+            await asyncio.Future()
+        with patch.object(client, "sync", sync):
+            self.service.accept(json.dumps({"id": "transfer", "method": "connectAndSync", "params": {"address": "AA:BB"}}))
+            await asyncio.wait_for(started.wait(), 2)
+            blocked = await self.request("connectAndSync", {"address": "CC:DD"})
+            self.assertIn("already running", blocked["error"])
+            await self.request("disconnect")
+        self.assertIn({"kind": "result", "id": "transfer", "error": "The operation was cancelled."}, self.output)
+        self.assertEqual(client.calls, [("connect", "AA:BB"), "disconnect"])
 
     async def test_disconnect_can_run_while_scan_is_waiting(self):
         self.service.accept(json.dumps({"id": "scan", "method": "scan"}))

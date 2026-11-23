@@ -11,22 +11,33 @@ from datetime import datetime
 import importlib.metadata
 from pathlib import Path
 import platform
+import re
 from typing import Callable
 
 from . import __version__
 from .live_audio import STATE_NAMES, dictation_capability, parse_touch_events
 from .protocol import (
-    ACK_UUID, ADVERTISED_SERVICE_UUID, COMMAND_UUID, RESPONSE_UUID, SERVICE_UUID,
-    Packet, PacketCodec, binding_confirmation, build_binding_request,
+    ACK_UUID, ADVERTISED_SERVICE_UUID, COMMAND_UUID, RESPONSE_UUID, SECOND_COMMAND_UUID, SERVICE_UUID,
+    Packet, PacketCodec, ProtocolError, binding_confirmation, build_binding_request,
     encode_packet, make_ack, next_sequence, parse_binding_response,
     validate_binding_response,
 )
 from .recordings import RecordingTransfer
+from .realtime_recordings import QUERY as REALTIME_QUERY, RealtimeRecordingTransfer
 from .storage import DesktopStorage
 
 SECOND_RESPONSE_UUID = '0000013a-0000-1000-8000-00805f9b34fb'
 AUTHENTICATION_TIMEOUT = 60
 TOUCH_REPORT_TIMEOUT = 8
+SUMMARY_TIMEOUT = 3
+FIRST_PACKET_TIMEOUT = 10
+
+
+class RingDisconnectedError(RuntimeError):
+    """An established Bluetooth link was lost unexpectedly."""
+
+    def __init__(self):
+        super().__init__('The ring disconnected. Saved recordings are retained.')
 
 
 async def diagnose() -> dict:
@@ -110,6 +121,7 @@ class RingClient:
         self._codec = PacketCodec()
         self._sequence = 0
         self._generation = 0
+        self._unexpected_disconnect = False
         self._authenticated = False
         self._working_state: int | None = None
         self._binding = None
@@ -117,6 +129,10 @@ class RingClient:
         self._sync_future = None
         self._summary_future = None
         self._transfer = None
+        self._realtime = None
+        self._transfer_protocol = None
+        self._legacy_empty = False
+        self._file_channel = COMMAND_UUID
         self._reader = None
         self._queue = None
         self._write_lock = asyncio.Lock()
@@ -193,14 +209,31 @@ class RingClient:
                 future.cancel()
             self._touch_future = None
 
-    async def scan(self) -> list[dict]:
+    async def scan(self, address: str | None = None) -> list[dict]:
         from bleak import BleakScanner
         if self._ble is not None:
             raise RuntimeError('Disconnect the ring before scanning again.')
-        self._log('Scanning nearby Bluetooth advertisements for 8 seconds…')
+        if address is not None:
+            if not isinstance(address, str) or not re.fullmatch(r'(?:[0-9A-Fa-f]{2}:){5}[0-9A-Fa-f]{2}', address):
+                raise ValueError('Enter the Bluetooth MAC address shown in the ring app.')
+            address = address.upper()
+        self._log(f'Scanning for {address}…' if address else 'Scanning nearby Bluetooth advertisements for 8 seconds…')
         try:
-            results = await asyncio.wait_for(
-                BleakScanner.discover(timeout=8, return_adv=True, **_scan_options()), timeout=15)
+            if address is None:
+                discovered = await asyncio.wait_for(
+                    BleakScanner.discover(timeout=8, return_adv=True, **_scan_options()), timeout=15)
+                results = discovered.values()
+            else:
+                results = []
+
+                def match(device, advertisement):
+                    if device.address.upper() != address:
+                        return False
+                    results.append((device, advertisement))
+                    return True
+
+                await asyncio.wait_for(
+                    BleakScanner.find_device_by_filter(match, timeout=8, **_scan_options()), timeout=15)
         except Exception as error:
             guidance = ('Allow Spur Ring in System Settings → Privacy & Security → Bluetooth, and check Bluetooth is enabled.'
                         if platform.system() == 'Darwin' else
@@ -208,10 +241,12 @@ class RingClient:
             raise RuntimeError(f'Bluetooth scan failed: {error}. {guidance}') from error
         found = []
         self._devices.clear()
-        for device, advertisement in results.values():
+        for device, advertisement in results:
             name = advertisement.local_name or device.name or 'Unnamed Bluetooth device'
             services = {value.lower() for value in advertisement.service_uuids}
-            compatible = (ADVERTISED_SERVICE_UUID.lower() in services or
+            # A selected ring can advertise without a name. Connect verifies FE02
+            # and the binding reply before allowing any recording request.
+            compatible = (address is not None or ADVERTISED_SERVICE_UUID.lower() in services or
                           SERVICE_UUID.lower() in services or
                           ('RING' in name.upper() and any(word in name.upper() for word in ('AIZO', 'DREAME', 'SPUR'))))
             if not compatible:
@@ -236,6 +271,7 @@ class RingClient:
             raise RuntimeError('Scan and select a compatible ring first.')
         self._generation += 1
         generation = self._generation
+        self._unexpected_disconnect = False
         self._codec.reset()
         self._working_state = None
         self._authenticated = False
@@ -249,8 +285,10 @@ class RingClient:
             self._connection_lost, generation), timeout=20, **backend_options)
         self._ble = client
         self._state('connecting', 'Opening the ring’s Bluetooth service…')
+        link_opened = False
         try:
             await asyncio.wait_for(client.connect(), timeout=25)
+            link_opened = True
             service = client.services.get_service(SERVICE_UUID)
             if service is None:
                 raise RuntimeError('This device does not expose the expected AIZO FE02 service.')
@@ -276,19 +314,25 @@ class RingClient:
                 int(now.utcoffset().total_seconds() // 60))
             await self._send(self._binding.payload)
             await asyncio.wait_for(self._auth_future, timeout=AUTHENTICATION_TIMEOUT)
-            if generation != self._generation:
-                raise RuntimeError('Connection was cancelled.')
+            self._require_link(client, generation)
             self._authenticated = True
-            self._state('connected', 'Ring authentication succeeded. Ready to sync.')
+            self._state('connected', f'Authenticated ring {device.address}. Ready to sync.')
             self._log('Authenticated directly over Bluetooth. No phone or cloud connection is used.')
         except asyncio.TimeoutError as error:
             phase = self._status
+            lost = self._unexpected_disconnect or (link_opened and not client.is_connected)
             await self._disconnect()
+            if lost:
+                raise RingDisconnectedError() from error
             if phase == 'authenticating':
                 raise RuntimeError('The ring did not complete authentication. Keep it awake and near the PC, and make sure its mobile connection is closed.') from error
             raise RuntimeError('The Bluetooth connection timed out. Keep the ring awake and near the PC, then try again.') from error
-        except BaseException:
+        except BaseException as error:
+            # A backend can report a GATT failure before its disconnect callback.
+            lost = self._unexpected_disconnect or (link_opened and not client.is_connected)
             await self._disconnect()
+            if lost and isinstance(error, Exception) and not isinstance(error, (ProtocolError, RuntimeError)):
+                raise RingDisconnectedError() from error
             raise
         finally:
             if self._auth_future is not None and self._auth_future.done() and not self._auth_future.cancelled():
@@ -307,13 +351,14 @@ class RingClient:
         loop.call_soon_threadsafe(enqueue)
 
     def _connection_lost(self, generation):
-        if generation != self._generation:
+        if generation != self._generation or self._unexpected_disconnect:
             return
+        self._unexpected_disconnect = True
         self._authenticated = False
         self._dictation_intent += 1
         self._dictation_armed = False
         self._emit('dictation-state', armed=False)
-        self._abort(RuntimeError('The ring disconnected. Saved recordings are retained.'))
+        self._abort(RingDisconnectedError())
         self._state('disconnected', 'The ring disconnected.')
         # Clear this connection before permitting another explicit Connect action.
         asyncio.create_task(self._disconnect_generation(generation))
@@ -368,7 +413,8 @@ class RingClient:
             confirmation = binding_confirmation(self._binding, response)
             if confirmation is not None:
                 await self._send(confirmation)
-            self._auth_future.set_result(None)
+            if self._auth_future is not None and not self._auth_future.done():
+                self._auth_future.set_result(None)
             return
         if payload.startswith(b'\x81\x64'):
             if self._touch_future is not None and not self._touch_future.done():
@@ -417,23 +463,35 @@ class RingClient:
                     self._summary_future.set_result({'count': int.from_bytes(payload[3:5], 'big'),
                                                      'bytes': int.from_bytes(payload[5:9], 'big')})
             return
-        if payload[:2] in (b'\xac\x22', b'\xac\x24'):
+        if payload[:2] in (b'\xac\x22', b'\xac\x24', b'\xac\x52', b'\xac\x54'):
             if self._sync_future is None or self._sync_future.done() or self._transfer is None:
                 return
-            generation, transfer, future = self._generation, self._transfer, self._sync_future
+            realtime = payload[1] in (0x52, 0x54)
+            if self._legacy_empty and not realtime:
+                return
+            transfer = self._realtime if realtime else self._transfer
+            if transfer is None or (self._transfer_protocol is not None and self._transfer_protocol is not transfer):
+                return
+            if payload[1] in (0x22, 0x52):
+                self._transfer_protocol = transfer
+            generation, future = self._generation, self._sync_future
             # The transfer layer persists bytes before emitting a successful end ACK.
-            update = await asyncio.to_thread(transfer.feed, payload)
+            try:
+                update = await asyncio.to_thread(transfer.feed, payload)
+            except (ValueError, OSError) as error:
+                if not future.done():
+                    future.set_exception(error)
+                return
             if generation != self._generation or future is not self._sync_future or future.done():
                 return
             if update.error:
-                raise RuntimeError(update.error)
+                future.set_exception(RuntimeError(update.error))
+                return
             for warning in update.warnings:
                 self._log(warning)
             self._last_sync_activity = asyncio.get_running_loop().time()
-            for command in update.commands:
-                await self._send(command)
-            if update.progress:
-                self._emit('progress', progress=update.progress.percent)
+            # Completed files are already durable. Publish them even if the link
+            # drops during the end acknowledgement or the next-file request.
             for file in update.completed:
                 if file.ogg_path is not None:
                     self._emit('recording', file={'name': file.ogg_path.name,
@@ -442,15 +500,39 @@ class RingClient:
                 self._log(f'Saved recording {file.raw_path.name}.')
                 if file.metadata and file.metadata.trailing_bytes:
                     self._log(f'The vendor audio container included {file.metadata.trailing_bytes} trailing bytes; they remain in the saved raw file.')
-            if update.finished and not self._sync_future.done():
-                self._sync_future.set_result(None)
+            for command in update.commands:
+                if command[:2] == b'\xac\x21' and update.completed:
+                    await asyncio.sleep(0.5)
+                if future.done() or generation != self._generation:
+                    return
+                await self._send(command, self._file_channel)
+            if future.done() or generation != self._generation:
+                return
+            if update.progress:
+                self._emit('progress', progress=update.progress.percent)
+            if update.finished and not realtime and not transfer.completed_files:
+                self._legacy_empty = True
+                await self._query_realtime()
+            elif update.finished:
+                if realtime and not transfer.completed_files and not self._legacy_empty:
+                    future.set_exception(RuntimeError('The real-time queue is empty, but the ring did not confirm its stored recording queue.'))
+                else:
+                    future.set_result(None)
             return
         self._log(f'Received ring message {payload[:2].hex().upper()} ({len(payload)} bytes).')
 
-    async def _write_packet(self, packet: Packet, channel=COMMAND_UUID):
-        client = self._ble
-        if client is None or not client.is_connected:
+    def _require_link(self, client, generation):
+        if self._unexpected_disconnect:
+            raise RingDisconnectedError()
+        if client is None or generation != self._generation or client is not self._ble:
             raise RuntimeError('The ring is not connected.')
+        if not client.is_connected:
+            self._connection_lost(generation)
+            raise RingDisconnectedError()
+
+    async def _write_packet(self, packet: Packet, channel=COMMAND_UUID):
+        client, generation = self._ble, self._generation
+        self._require_link(client, generation)
         characteristic = client.services.get_characteristic(channel)
         if characteristic is None:
             if channel == ACK_UUID:
@@ -462,6 +544,7 @@ class RingClient:
         response = 'write-without-response' not in characteristic.properties
         wire = encode_packet(packet)
         async with self._write_lock:
+            self._require_link(client, generation)
             def write_limit():
                 return (client.mtu_size - 3 if response else
                         characteristic.max_write_without_response_size)
@@ -473,50 +556,108 @@ class RingClient:
             limit = write_limit()
             while len(wire) > limit and asyncio.get_running_loop().time() < deadline:
                 await asyncio.sleep(0.05)
+                self._require_link(client, generation)
                 limit = write_limit()
             if len(wire) > limit:
                 raise RuntimeError(f'The Bluetooth write size is too small ({limit} bytes; this command needs {len(wire)}). Reconnect the ring to renegotiate its packet size.')
-            await asyncio.wait_for(client.write_gatt_char(characteristic, wire, response=response), timeout=8)
+            try:
+                await asyncio.wait_for(client.write_gatt_char(characteristic, wire, response=response), timeout=8)
+            except Exception:
+                self._require_link(client, generation)
+                raise
             await asyncio.sleep(0.1)
 
-    async def _send(self, payload: bytes):
+    async def _send(self, payload: bytes, channel=COMMAND_UUID):
         sequence = self._sequence
         self._sequence = next_sequence(sequence)
-        await self._write_packet(Packet(payload=payload, sequence=sequence))
+        await self._write_packet(Packet(payload=payload, sequence=sequence), channel)
+
+    async def _query_realtime(self):
+        if self._realtime is None:
+            self._realtime = RealtimeRecordingTransfer(self._transfer.output_dir)
+            self._last_sync_activity = asyncio.get_running_loop().time()
+            self._log('Checking the AIZO real-time recording queue (AC51).')
+            await self._send(REALTIME_QUERY, self._file_channel)
 
     async def sync(self):
-        if not self._authenticated or self._ble is None or not self._ble.is_connected:
+        client, generation = self._ble, self._generation
+        if not self._authenticated and not self._unexpected_disconnect:
             raise RuntimeError('Connect and authenticate the ring first.')
+        self._require_link(client, generation)
         if self._sync_future is not None:
             raise RuntimeError('A recording sync is already running.')
-        if self._working_state not in (None, 1, 4):
+        # This firmware also emits state 0 during an authenticated inventory
+        # check. Like a missing state, it supplies no recording/paused signal.
+        if self._working_state not in (None, 0, 1, 4):
             raise RuntimeError('Stop recording and wait until the ring is idle before syncing.')
         loop = asyncio.get_running_loop()
         self._sync_future = loop.create_future()
         self._summary_future = loop.create_future()
+        self._legacy_empty = False
+        self._transfer_protocol = None
         self._state('syncing', 'Checking ring recordings…')
         self._emit('progress', progress=0)
         try:
             await self._send(b'\xaa\x13\x01')
-            summary = await asyncio.wait_for(self._summary_future, timeout=10)
-            self._log(f'Ring reports {summary["count"]} recording(s), {summary["bytes"]} bytes.')
-            if summary['count'] == 0:
-                self._log('There are no recordings to download.')
-                return
+            try:
+                summary = await asyncio.wait_for(self._summary_future, timeout=SUMMARY_TIMEOUT)
+                self._log(f'Ring reports {summary["count"]} recording(s), {summary["bytes"]} bytes.')
+            except asyncio.TimeoutError:
+                summary = None
+                self._log('No storage summary received. Requesting recordings directly.')
             # Isolate transfer caches by device; do not mix cached data from two rings.
-            address = ''.join(character for character in self._ble.address if character.isalnum())
+            if self._sync_future.done():
+                await self._sync_future
+            self._require_link(client, generation)
+            address = ''.join(character for character in client.address if character.isalnum())
             output = self.storage.recordings / address
-            self._transfer = RecordingTransfer(output)
+            # Vendor BtHelper.requestHex(bytes, "") routes AC21/23/25 through HEX_WRITE_ECG.
+            dedicated = client.services.get_characteristic(SECOND_COMMAND_UUID)
+            self._file_channel = (SECOND_COMMAND_UUID if dedicated and
+                                  {'write', 'write-without-response'}.intersection(dedicated.properties)
+                                  else COMMAND_UUID)
+            self._log(f'Recording transfer write channel: {self._file_channel[4:8]}.')
+            self._transfer = RecordingTransfer(output, padded_request=False)
+            self._log('Requesting stored recordings (AIZO 3.2.1, 12-byte AC21).')
             self._last_sync_activity = loop.time()
             for command in self._transfer.start(resume=False):
-                await self._send(command)
+                await self._send(command, self._file_channel)
+            realtime_unconfirmed = False
             while not self._sync_future.done():
                 await asyncio.wait((self._sync_future,), timeout=1)
+                if self._sync_future.done():
+                    break
+                self._require_link(client, generation)
+                if (self._transfer_protocol is None
+                        and loop.time() - self._last_sync_activity > FIRST_PACKET_TIMEOUT):
+                    if not self._transfer.padded_request and not self._legacy_empty:
+                        self._log('No file reply to 12-byte AC21. Trying the older 16-byte AC21.')
+                        self._transfer.padded_request = True
+                        self._last_sync_activity = loop.time()
+                        for command in self._transfer.start(resume=False):
+                            await self._send(command, self._file_channel)
+                    elif self._realtime is None:
+                        await self._query_realtime()
+                    elif self._legacy_empty:
+                        realtime_unconfirmed = True
+                        self._log('The legacy queue confirmed empty. The real-time query received no reply.')
+                        self._sync_future.set_result(None)
+                    else:
+                        inventory = (f'The ring reported {summary["count"]} recording(s) and {summary["bytes"]} bytes.'
+                                     if summary is not None else 'The ring did not return a storage count.')
+                        raise RuntimeError(f'Ring {client.address} authenticated. {inventory} No file reply arrived on either recording protocol. The recording queue is unverified.')
                 if loop.time() - self._last_sync_activity > 180:
                     raise asyncio.TimeoutError()
             await self._sync_future
+            received = self._transfer.completed_files + (self._realtime.completed_files if self._realtime else 0)
+            if summary and (received < summary['count'] or (received == 0 and summary['bytes'] > 0)):
+                raise RuntimeError(f'The ring reported {summary["count"]} recording(s) ({summary["bytes"]} bytes) but delivered {received}. Completed files are saved. Retry sync for missing recordings.')
             self._emit('progress', progress=100)
             self._log('Recording sync completed.')
+            result = {'reported': summary['count'] if summary else None, 'received': received}
+            if realtime_unconfirmed:
+                result['notice'] = 'The stored recording queue is empty. The ring did not answer the real-time recording query.'
+            return result
         except asyncio.TimeoutError as error:
             raise RuntimeError('The ring stopped responding during sync. Completed recordings are retained; retry sync to download again.') from error
         finally:
@@ -532,11 +673,14 @@ class RingClient:
             if self._transfer is not None:
                 self._transfer.stop()
             self._transfer = None
-            if self._authenticated:
+            self._realtime = None
+            self._transfer_protocol = None
+            if generation == self._generation and self._authenticated:
                 self._state('connected', 'Ready to sync.')
 
     async def disconnect(self):
         async with self._lifecycle_lock:
+            self._unexpected_disconnect = False
             await self._disconnect()
 
     async def _disconnect_generation(self, generation):

@@ -18,7 +18,7 @@ import threading
 from typing import Any, BinaryIO, Callable
 
 from . import __version__
-from .transport import RingClient, diagnose
+from .transport import RingClient, RingDisconnectedError, diagnose
 from . import macos_input, windows_input
 
 
@@ -67,8 +67,13 @@ class DesktopService:
         self._shutdown = asyncio.Event()
         self._pending: dict[str, asyncio.Task] = {}
         self._loop: asyncio.AbstractEventLoop | None = None
+        self._selected_address: str | None = None
+        self._recording_job: asyncio.Task | None = None
+        self._received_paths: set[str] = set()
 
     def _event(self, event: dict) -> None:
+        if self._recording_job is not None and event.get("type") == "recording":
+            self._received_paths.add(event["file"]["path"])
         record = {"kind": "event", "event": event}
         if self._loop is not None and threading.current_thread() is not threading.main_thread():
             self._loop.call_soon_threadsafe(self.write, record)
@@ -77,6 +82,31 @@ class DesktopService:
 
     def _failure(self, request_id: str, error: str) -> None:
         self.write({"kind": "result", "id": request_id, "error": error})
+
+    async def _sync_recordings(self, address: str | None, *, connect_first: bool = False) -> dict:
+        if self._recording_job is not None:
+            raise RuntimeError("A recording sync is already running.")
+        self._recording_job = asyncio.current_task()
+        self._received_paths.clear()
+        try:
+            for attempt in range(2):
+                try:
+                    if connect_first or attempt:
+                        await self.client.connect(address)
+                        self._selected_address = address
+                    result = await self.client.sync()
+                    if attempt and self._received_paths:
+                        result["received"] = max(result["received"], len(self._received_paths))
+                    return result
+                except RingDisconnectedError:
+                    if attempt or not address:
+                        raise
+                    self._event({"type": "sync-retry", "address": address})
+                    self._event({"type": "log", "message": f"Bluetooth link lost. Reconnecting to {address} once to continue sync."})
+                    await self.client.disconnect()
+        finally:
+            self._recording_job = None
+            self._received_paths.clear()
 
     async def dispatch(self, method: str, params: dict[str, Any]) -> Any:
         """Explicit public operations; arbitrary attributes are never invoked."""
@@ -88,21 +118,34 @@ class DesktopService:
                                      "ring_live_audio": False}}
         if method in ("getInputPermissions", "requestInputPermissions"):
             return await asyncio.to_thread(_input_permissions, method == "requestInputPermissions")
+        if self._recording_job is not None and method in ("scan", "connect", "connectAndSync", "sync", "syncRecordings"):
+            raise RuntimeError("A recording sync is already running.")
         if method == "scan":
-            return await self.client.scan()
+            address = params.get("address")
+            return await self.client.scan(address) if address is not None else await self.client.scan()
         if method == "diagnose":
             return await diagnose()
-        if method == "connect":
+        if method in ("connect", "connectAndSync"):
             address = params.get("address")
             if not isinstance(address, str) or not address or len(address) > 128:
                 raise ValueError("A valid ring address is required.")
+            if method == "connectAndSync":
+                return await self._sync_recordings(address, connect_first=True)
             await self.client.connect(address)
+            self._selected_address = address
             return {"connected": True}
         if method == "disconnect":
+            job = self._recording_job
+            if job is not None:
+                job.cancel()
+                await asyncio.gather(job, return_exceptions=True)
+            self._selected_address = None
             await self.client.disconnect()
             return {"connected": False}
+        if method == "syncRecordings":
+            return await self._sync_recordings(self._selected_address)
         if method == "sync":
-            await self.client.sync()
+            await self._sync_recordings(self._selected_address)
             return self.client.list_recordings()
         if method == "listRecordings":
             return self.client.list_recordings()
@@ -137,7 +180,8 @@ class DesktopService:
             result = await self.dispatch(method, params)
             self.write({"kind": "result", "id": request_id, "result": result})
         except asyncio.CancelledError:
-            self._failure(request_id, "The desktop service is shutting down.")
+            self._failure(request_id, "The desktop service is shutting down." if self._shutdown.is_set()
+                          else "The operation was cancelled.")
             raise
         except Exception as error:
             self._failure(request_id, str(error) or type(error).__name__)
@@ -174,6 +218,7 @@ class DesktopService:
             self._failure(request_id, str(error))
 
     async def close(self) -> None:
+        self._shutdown.set()
         tasks = list(self._pending.values())
         for task in tasks:
             task.cancel()

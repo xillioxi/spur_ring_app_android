@@ -53,6 +53,7 @@ export class Dictation {
     if (this.startPromise) await this.startPromise.catch(() => {});
     if (this.enabled) return;
     const { state } = this.ports;
+    if (state.busy) throw new Error(`Wait until ${state.busy} finishes before starting dictation.`);
     if (!state.service.ready) throw new Error('The native ring service is not ready.');
     if (!this.ports.key()) throw new Error('Add your ElevenLabs API key in Settings first.');
     if (state.settings.source !== 'microphone' && state.connection !== 'connected') throw new Error('Connect your ring before arming ring dictation.');

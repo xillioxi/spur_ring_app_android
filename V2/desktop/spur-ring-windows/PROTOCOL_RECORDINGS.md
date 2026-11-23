@@ -11,6 +11,23 @@ Scope: static recovery from the bundled Android AARs, no device connection or wr
 
 All commands below are application payloads passed to BtHelper.requestHex. Outer transport framing, encryption, GATT characteristics and authentication are separate layers.
 
+The Android SDK uses different write characteristics for the inventory and the download. The storage query uses the default write characteristic (0101). For AC21, AC23 and AC25, `BeFileTransferWithRfbpUtil` calls `BtHelper.requestHex(bytes, "")`. That overload selects `HEX_WRITE_STR_ECG`, which `AizoBeConfig` maps to 0131. Desktop uses 0131 when writable and retains its previous 0101 path for devices without a writable 0131. It listens on the available 010A and 013A notification channels. Verification with a simulated dual-channel ring covers the request and final acknowledgment. A physical download on 0131 remains unverified.
+
+## AIZO RING 3.2.1 comparison (2026-11-23)
+
+The supplied Android package identifies itself as `com.eiot.be.ring`, version 3.2.1, build 300201. Static inspection of the base APK's `classes2.dex` shows that the recordings screen (`VoiceMainFm$initView$1.invokeSuspend`) starts sync through `BeFileTransferWithRfbpUtilV2.T6J7gd`.
+
+- With no registered real-time audio listener, that method starts the stored-file transfer. In AIZO 3.2.1, `RfbpV2` constructs an eight-byte AC21 prefix and appends a four-byte big-endian packet number. The fresh request is `AC 21 01 01 FF FF FF FF 00 00 00 01`. The older bundled AAR appends four additional FF bytes. Desktop now sends the compact form first and retries the padded form after first-packet silence. It keeps the chosen form for subsequent file requests.
+- With a registered listener, it starts `BeRealtimeAudioTransferUtil`. The AI chat screen registers such a listener in `AiChatAc.rebindRingAudioListeners`. This transfer implementation handles AC52 data and AC54 end messages. The Android branch checks listener registration, so firmware version alone cannot establish which branch ran.
+
+Spur Desktop now queries the alternate queue with AC51 when the legacy request gets no first packet or confirms an empty queue. A missing AA14 inventory reply also permits a direct download attempt. The AC52 parser reads the session timestamp, packet sequence, big-endian payload length and little-endian Opus format fields. AC54 supplies the expected packet count. Spur checks completeness, saves the frames, Ogg and format metadata, then issues AC55 success. After a nonempty file it asks for the next one. An all-FF timestamp and zero packets marks an empty real-time queue. An unanswered request is shown separately from an explicit empty reply. This implementation has been exercised with simulated BLE notifications.
+
+The owner confirmed that the official app synced standalone recordings. One Windows session received binding status 0x23. In a later session the same ring authenticated, returned zero files and zero bytes, and emitted two state-0 notifications. Neither the padded AC21 nor AC51 elicited a file reply on 0131. A zero inventory count alone cannot establish that a recording queue is empty. Desktop allows another download attempt after state 0, while retaining its checks for recording, paused and transferring states. The earlier simulated AC52 transfer produced an Ogg file that FFmpeg decoded.
+
+The Nov 23 Windows activity log showed a disconnect 3.3 seconds into one sync. Later, an older copy of Spur was still connected and the ring did not advertise to a second instance. After the older window closed, the rebuilt service discovered the ring, authenticated and received AA14. The ring reported zero files and zero bytes, then sent two state-0 notifications for each AC21 form and no audio payload on either protocol. The connection stayed open through the final query. The cause of the earlier physical disconnect remains unknown. AIZO 3.2.1 also loads previously downloaded files from the phone when opening its recording list. A Bluetooth trace from a successful transfer of a fresh clip would identify any difference in initialization and replies on this firmware.
+
+Spur Desktop's Connect & sync action starts the file request immediately after authentication. A link loss during that job triggers one reconnect to the selected address. A completed file is published to the library before its final acknowledgment. A recording-level failure ends the request while keeping a healthy Bluetooth session available.
+
 ## Commands
 
 All multibyte transfer integers are big endian. File times are four-byte Unix seconds on the wire; SDK converts to milliseconds by multiplying by 1000.

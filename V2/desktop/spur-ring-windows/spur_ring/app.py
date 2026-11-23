@@ -408,7 +408,8 @@ class SpurRingApp:
             self.device_rows[row] = device
             signal = f"{device['rssi']} dBm" if device.get("rssi") is not None else "—"
             compatible = bool(device.get("compatible"))
-            self.devices.insert("", "end", iid=row, values=(device.get("name") or device["id"], signal, "AIZO ring" if compatible else "Unsupported"), tags=() if compatible else ("unsupported",))
+            label = f"{device['name']} · {device['id']}" if device.get("name") else device["id"]
+            self.devices.insert("", "end", iid=row, values=(label, signal, "AIZO ring" if compatible else "Unsupported"), tags=() if compatible else ("unsupported",))
         count = sum(bool(item.get("compatible")) for item in self.device_rows.values())
         self.device_hint.set(f"{count} compatible ring{'s' if count != 1 else ''} found · Select a ring to connect." if count else "No compatible rings found · Bring the ring closer and scan again.")
         self.detail_var.set("The ring may need to be disconnected from its mobile app before it can connect here.")

@@ -82,14 +82,18 @@ def opus_to_ogg(raw: bytes) -> tuple[bytes, OpusMetadata]:
     if not packets:
         raise ValueError("Recording has no complete Opus frames")
     metadata = OpusMetadata(version, frequency, channels, duration, frame_size, bit_rate, packets, trailing)
+    return mux_opus_frames(memoryview(raw)[16:], metadata), metadata
+
+
+def mux_opus_frames(frames: memoryview, metadata: OpusMetadata) -> bytes:
     # Android deliberately uses 48 kHz for Ogg granules and OpusHead input rate.
-    opus_head = struct.pack("<8sBBHIhB", b"OpusHead", 1, channels, 3200, 48000, 0, 0)
+    opus_head = struct.pack("<8sBBHIhB", b"OpusHead", 1, metadata.channels, 3200, 48000, 0, 0)
     vendor = b"EIOT Opus Encoder"
     opus_tags = b"OpusTags" + struct.pack("<I", len(vendor)) + vendor + struct.pack("<I", 0)
     pages = [_page(opus_head, 0, 0, 2), _page(opus_tags, 0, 1, 0)]
-    samples_per_packet = 48000 * duration // 1000
-    for index in range(packets):
-        start = 16 + index * frame_size
-        pages.append(_page(raw[start:start + frame_size], samples_per_packet * (index + 1), index + 2, 0))
-    pages.append(_page(None, samples_per_packet * packets, packets + 2, 4))
-    return b"".join(pages), metadata
+    samples_per_packet = 48000 * metadata.frame_duration_ms // 1000
+    for index in range(metadata.packet_count):
+        start = index * metadata.frame_size
+        pages.append(_page(bytes(frames[start:start + metadata.frame_size]), samples_per_packet * (index + 1), index + 2, 0))
+    pages.append(_page(None, samples_per_packet * metadata.packet_count, metadata.packet_count + 2, 4))
+    return b"".join(pages)
