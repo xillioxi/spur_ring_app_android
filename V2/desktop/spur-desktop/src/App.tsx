@@ -421,7 +421,7 @@ function SettingsPage({ settings, disabled, pending, onSave }: { settings: Setti
       <span className="shortcut-art"><Icon name="bolt" size={24} /></span><div className="section-overline">ONE SHORTCUT. MORE FLOW.</div><h3>Good thoughts<br />don’t wait.</h3>
       <p>Start or stop dictation from any app. Keep your cursor where you want your words to go.</p><KeyboardShortcut shortcut={settings.shortcut} />
       <div className="settings-aside-rule" /><span className="section-overline">A NOTE ON RING AUDIO</span>
-      <p>{settings.credentialStore === 'Windows' ? 'Choose Ring microphone to dictate from your ring. Ring control uses this computer’s microphone.' : 'Ring control uses the computer microphone. Ring microphone transcribes completed ring recordings.'}</p>
+      <p>Choose Ring microphone to dictate from your ring. Ring control uses this computer’s microphone.</p>
     </aside>
   </form>;
 }

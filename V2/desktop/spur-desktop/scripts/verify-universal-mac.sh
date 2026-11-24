@@ -32,6 +32,62 @@ for slice in arm64 x64; do
   fi
 done
 mkdir -p test-output
+python3 - "$app" "$arch" "$cpu" <<'PY'
+import json, platform, plistlib, re, subprocess, sys
+from pathlib import Path
+
+app, arch, cpu = Path(sys.argv[1]), sys.argv[2], sys.argv[3]
+resources = app / 'Contents/Resources'
+helper = resources / 'ring-service' / arch / 'SpurRingService.app'
+
+def version(value):
+    return tuple((list(map(int, value.split('.'))) + [0, 0])[:3])
+
+def plist_floor(bundle):
+    with (bundle / 'Contents/Info.plist').open('rb') as stream:
+        info = plistlib.load(stream)
+    floors = [info['LSMinimumSystemVersion']]
+    arch_floor = info.get('LSMinimumSystemVersionByArchitecture', {}).get(cpu)
+    if arch_floor:
+        floors.append(arch_floor)
+    return max(floors, key=version)
+
+def macho_floor(binary):
+    output = subprocess.check_output(['otool', '-arch', cpu, '-l', str(binary)], text=True)
+    floors = []
+    for command in re.split(r'(?m)^Load command \d+\s*$', output):
+        if re.search(r'(?m)^\s*cmd LC_BUILD_VERSION$', command):
+            if re.search(r'(?im)^\s*platform (?:1|macos|macosx)$', command):
+                floors.append(re.search(r'(?m)^\s*minos ([\d.]+)$', command)[1])
+        elif re.search(r'(?m)^\s*cmd LC_VERSION_MIN_MACOSX$', command):
+            floors.append(re.search(r'(?m)^\s*version ([\d.]+)$', command)[1])
+    if not floors:
+        raise ValueError(f'No macOS deployment target in {binary.name} for {cpu}')
+    return max(floors, key=version)
+
+core = {
+    'appInfoPlist': plist_floor(app),
+    'appExecutable': macho_floor(app / 'Contents/MacOS/Spur Desktop'),
+    'electronFramework': macho_floor(app / 'Contents/Frameworks/Electron Framework.framework/Electron Framework'),
+    'ringHelperInfoPlist': plist_floor(helper),
+    'ringHelperExecutable': macho_floor(helper / 'Contents/MacOS/SpurRingService'),
+}
+engines = {
+    'codex': macho_floor(resources / 'codex' / arch / 'bin/codex'),
+    'claude': macho_floor(resources / 'app.asar.unpacked/node_modules/@anthropic-ai' / f'claude-agent-sdk-darwin-{arch}' / 'claude'),
+}
+expected = json.loads(Path('electron-builder.json').read_text())['mac']['minimumSystemVersion']
+core_floor = max(core.values(), key=version)
+receipt = {'arch': arch, 'testedMacOS': platform.mac_ver()[0], 'configuredMinimum': expected,
+           'coreTargets': core, 'coreMinimum': core_floor, 'assistantTargets': engines}
+Path(f'test-output/universal-deployment-{arch}.json').write_text(json.dumps(receipt, indent=2) + '\n')
+print(json.dumps(receipt), flush=True)
+if version(core_floor) > version(expected) or version(core['appInfoPlist']) != version(expected):
+    raise SystemExit(f'Core minimum {core_floor} or app Info.plist differs from the configured macOS {expected} floor')
+for engine, minimum in engines.items():
+    if version(minimum) > version(core_floor):
+        print(f'{engine} on {arch} requires macOS {minimum}. Core Spur requires macOS {core_floor}.')
+PY
 report="$PWD/test-output/universal-$arch.json"
 : > "$report"
 "$executable" --self-test --report "$report"

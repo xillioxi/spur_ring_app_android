@@ -268,13 +268,13 @@ export class Dictation {
         const result = await this.ports.request('insertText', { target: cursor.target, text: value });
         if (cursor !== this.cursor || !this.enabled) return;
         if (!result.inserted) {
-          throw new Error(result.reason || 'Windows could not type in the selected field.');
+          throw new Error(result.reason || 'Spur could not type in the selected field.');
         }
         cursor.lastInserted += value;
       } catch (error) {
         if (cursor !== this.cursor || !this.enabled) return;
         this.cursor = undefined;
-        const reason = error instanceof Error ? error.message : 'Windows could not type in the selected field.';
+        const reason = error instanceof Error ? error.message : 'Spur could not type in the selected field.';
         this.patch({ targetLabel: 'Insertion paused', cursorNotice: reason });
         this.ports.log(reason, true);
       }

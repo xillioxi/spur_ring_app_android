@@ -50,8 +50,8 @@ def parse_touch_events(payload: bytes) -> list[TouchEvent]:
 def dictation_capability() -> dict:
     return {
         'ring_triggered_dictation': True,
-        'ring_live_audio': sys.platform == 'win32',
+        'ring_live_audio': sys.platform in ('win32', 'darwin'),
         'audio_source': 'computer_microphone',
         'ring_audio_protocol': 'AC51/AC52',
-        'reason': 'Windows can request an Opus stream from supported AIZO firmware during a physical recording.',
+        'reason': 'Spur can request an Opus stream from supported AIZO firmware during a physical recording.',
     }
