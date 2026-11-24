@@ -27,8 +27,6 @@ for slice in arm64 x64; do
   codesign --verify --deep --strict "$helper"
   if [[ "$slice" == "$arch" ]]; then
     "$helper/Contents/MacOS/SpurRingService" --help >/dev/null
-    "$codex" --version
-    "$claude" --version
   fi
 done
 mkdir -p test-output
@@ -72,10 +70,11 @@ core = {
     'ringHelperInfoPlist': plist_floor(helper),
     'ringHelperExecutable': macho_floor(helper / 'Contents/MacOS/SpurRingService'),
 }
-engines = {
-    'codex': macho_floor(resources / 'codex' / arch / 'bin/codex'),
-    'claude': macho_floor(resources / 'app.asar.unpacked/node_modules/@anthropic-ai' / f'claude-agent-sdk-darwin-{arch}' / 'claude'),
+engine_paths = {
+    'codex': resources / 'codex' / arch / 'bin/codex',
+    'claude': resources / 'app.asar.unpacked/node_modules/@anthropic-ai' / f'claude-agent-sdk-darwin-{arch}' / 'claude',
 }
+engines = {name: macho_floor(binary) for name, binary in engine_paths.items()}
 expected = json.loads(Path('electron-builder.json').read_text())['mac']['minimumSystemVersion']
 core_floor = max(core.values(), key=version)
 receipt = {'arch': arch, 'testedMacOS': platform.mac_ver()[0], 'configuredMinimum': expected,
@@ -87,6 +86,10 @@ if version(core_floor) > version(expected) or version(core['appInfoPlist']) != v
 for engine, minimum in engines.items():
     if version(minimum) > version(core_floor):
         print(f'{engine} on {arch} requires macOS {minimum}. Core Spur requires macOS {core_floor}.')
+    if version(minimum) <= version(receipt['testedMacOS']):
+        subprocess.run([str(engine_paths[engine]), '--version'], check=True)
+    else:
+        print(f'{engine} startup skipped on macOS {receipt["testedMacOS"]} because it requires {minimum}.')
 PY
 report="$PWD/test-output/universal-$arch.json"
 : > "$report"
