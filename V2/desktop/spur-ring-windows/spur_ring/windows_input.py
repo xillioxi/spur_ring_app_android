@@ -82,6 +82,7 @@ class _WindowsAPI:
         signatures = {
             "GetForegroundWindow": ([], _HWND),
             "IsWindow": ([_HWND], ctypes.c_int),
+            "IsChild": ([_HWND, _HWND], ctypes.c_int),
             "GetWindowThreadProcessId": ([_HWND, ctypes.POINTER(_DWORD)], _DWORD),
             "GetWindowTextLengthW": ([_HWND], ctypes.c_int),
             "GetWindowTextW": ([_HWND, ctypes.c_wchar_p, ctypes.c_int], ctypes.c_int),
@@ -113,6 +114,14 @@ class _WindowsAPI:
 
     def valid_window(self, handle: int) -> bool:
         return bool(self.user32.IsWindow(handle))
+
+    def focused_window(self, handle: int) -> int:
+        # Ask the foreground input queue: GetFocus() sees only the helper's thread.
+        info = _GUITHREADINFO(cbSize=ctypes.sizeof(_GUITHREADINFO))
+        if not self.user32.GetGUIThreadInfo(0, ctypes.byref(info)):
+            return 0
+        focus = info.hwndFocus
+        return int(focus) if focus and (focus == handle or self.user32.IsChild(handle, focus)) else 0
 
     def process_id(self, handle: int) -> int:
         process_id = _DWORD()
@@ -172,7 +181,11 @@ def capture_target(excluded_process_ids: list[int] | None = None) -> dict[str, A
         raise RuntimeError("Select a text field in another application before starting dictation.")
     if api.password_field_focused():
         raise RuntimeError("Dictation is unavailable in a password field.")
-    return {"handle": handle, "processId": process_id, "label": api.title(handle)}
+    target = {"handle": handle, "processId": process_id, "label": api.title(handle)}
+    focus = api.focused_window(handle)
+    if focus:
+        target["focusHandle"] = focus
+    return target
 
 
 def _plain_text(text: str) -> str:
@@ -195,9 +208,10 @@ def _unicode_events(text: str) -> Any:
     return events
 
 
-def _target_matches(api: _WindowsAPI, handle: int, process_id: int) -> bool:
+def _target_matches(api: _WindowsAPI, handle: int, process_id: int, focus_handle: int | None) -> bool:
     return bool(api.valid_window(handle) and api.foreground() == handle
-                and api.process_id(handle) == process_id)
+                and api.process_id(handle) == process_id
+                and (focus_handle is None or api.focused_window(handle) == focus_handle))
 
 
 def insert_text(target: dict[str, Any], text: str) -> dict[str, Any]:
@@ -212,9 +226,10 @@ def insert_text(target: dict[str, Any], text: str) -> dict[str, Any]:
     try:
         handle = int(target["handle"])
         process_id = int(target["processId"])
+        focus_handle = int(target["focusHandle"]) if "focusHandle" in target else None
     except (KeyError, TypeError, ValueError) as error:
         raise ValueError("The dictation target is invalid; start dictation again.") from error
-    if handle <= 0 or process_id <= 0:
+    if handle <= 0 or process_id <= 0 or (focus_handle is not None and focus_handle <= 0):
         raise ValueError("The dictation target is invalid; start dictation again.")
     plain = _plain_text(text)
     if not plain:
@@ -224,17 +239,15 @@ def insert_text(target: dict[str, Any], text: str) -> dict[str, Any]:
     with _INPUT_LOCK:
         if not api.interactive_desktop():
             return {"inserted": False, "count": 0, "reason": "Dictation requires the unlocked, active Windows desktop."}
-        if not _target_matches(api, handle, process_id):
-            return {"inserted": False, "count": 0, "reason": "The selected application is no longer in front."}
         deadline = time.monotonic() + _MODIFIER_TIMEOUT
         while api.modifiers_pressed():
-            if not _target_matches(api, handle, process_id):
-                return {"inserted": False, "count": 0, "reason": "The selected application is no longer in front."}
+            if not _target_matches(api, handle, process_id, focus_handle):
+                return {"inserted": False, "count": 0, "reason": "The selected text field no longer has focus."}
             if time.monotonic() >= deadline:
                 return {"inserted": False, "count": 0, "reason": "Release Ctrl, Shift, Alt and Windows keys to type dictation."}
             time.sleep(0.02)
-        if not _target_matches(api, handle, process_id):
-            return {"inserted": False, "count": 0, "reason": "The selected application is no longer in front."}
+        if not _target_matches(api, handle, process_id, focus_handle):
+            return {"inserted": False, "count": 0, "reason": "The selected text field no longer has focus."}
         if api.password_field_focused():
             return {"inserted": False, "count": 0, "reason": "Dictation is unavailable in a password field."}
         written, error = api.send(events)

@@ -622,6 +622,52 @@ class TransportTests(unittest.IsolatedAsyncioTestCase):
         state = next(event for event in self.events if event['type'] == 'ring-state')
         self.assertEqual((state['state'], state['name'], state['remaining_time']), (2, 'recording', 10))
 
+    async def test_disarmed_recordings_notify_once_per_take_without_opening_live_audio(self):
+        ring = await self.connect()
+        for state in [1, 2, 3, 4, 4, 5, 4, 1, 4, 4]:
+            await self.client._handle_payload(bytes([0xAA, 0x11, 1, state]))
+        ready = [e for e in self.events if e['type'] == 'recording-ready']
+        self.assertEqual(ready, [dict(type='recording-ready', address=ADDRESS_A, source='state')] * 2)
+        self.assertFalse(self.client._dictation_armed)
+        self.assertFalse(any(e['type'] in ('dictation-trigger', 'ring-opus') for e in self.events))
+        self.assertFalse(any(p.payload.startswith((b'\x81\x63', b'\xac\x51')) for _, p in ring.sent))
+
+    async def test_release_opens_completed_recording_for_sync_without_a_subsequent_state_four(self):
+        ring = await self.connect()
+        release = bytes.fromhex('81611A0B0C0F2C0A0106')
+        await self.client._handle_payload(release)
+        self.assertFalse(any(e['type'] == 'recording-ready' for e in self.events))
+        await self.client._handle_payload(bytes.fromhex('AA110102'))
+        await self.client._handle_payload(release)
+        await self.client._handle_payload(release)
+        self.assertEqual(self.client._working_state, 4)
+        result = await self.client.sync()
+        self.assertEqual(result['received'], 1)
+        self.assertTrue(ring.end_ack_files)
+        await self.client._handle_payload(bytes.fromhex('AA110104'))
+        ready = [e for e in self.events if e['type'] == 'recording-ready']
+        self.assertEqual(ready, [dict(type='recording-ready', address=ADDRESS_A, source='touch')])
+
+    async def test_catchup_shortcuts_only_explicit_empty_inventory_without_a_ready_signal(self):
+        self.behaviors[ADDRESS_A] = Behavior(reported_files=0, empty_transfer=True)
+        ring = await self.connect()
+        result = await self.client.sync(stored_only_if_reported=True)
+        self.assertTrue(result['inventoryOnly'])
+        self.assertFalse(any(p.payload.startswith((b'\xac\x21', b'\xac\x51')) for _, p in ring.sent))
+        await self.client._handle_payload(bytes.fromhex('AA110104'))
+        result = await self.client.sync(stored_only_if_reported=True)
+        self.assertNotIn('inventoryOnly', result)
+        self.assertTrue(any(p.payload.startswith(b'\xac\x21') for _, p in ring.sent))
+
+    async def test_catchup_syncs_files_if_storage_summary_is_missing_or_positive(self):
+        ring = await self.connect()
+        for silent_inventory in [False, True]:
+            ring.behavior.silent_inventory = silent_inventory
+            with patch('spur_ring.transport.SUMMARY_TIMEOUT', 0.5):
+                result = await self.client.sync(stored_only_if_reported=True)
+            self.assertEqual(result['received'], 1)
+            self.assertNotIn('inventoryOnly', result)
+
     async def test_armed_touch_and_state_controls_emit_start_stop_then_disarm(self):
         ring = await self.connect()
         await self.client.arm_dictation()
@@ -653,6 +699,65 @@ class TransportTests(unittest.IsolatedAsyncioTestCase):
                 await self.client.arm_dictation()
         self.assertFalse(self.client._dictation_armed)
         self.assertIsNone(self.client._touch_future)
+
+    async def test_live_take_ignores_backlog_streams_contiguous_opus_and_saves_before_ack(self):
+        self.behaviors[ADDRESS_A] = Behavior(dedicated_file_channel=True)
+        ring = await self.connect()
+        await self.client.arm_dictation(live_ring_audio=True)
+        # The official 3.2.1 state 1 initiates an upload. A compatible legacy
+        # device may instead mean idle; wait for a dated AC52 before emitting start.
+        with patch('spur_ring.transport.time.time', return_value=STAMP):
+            await self.client._handle_payload(bytes.fromhex('AA110101'))
+        self.assertIn((SECOND_COMMAND_UUID, bytes.fromhex('AC510101FFFFFFFF00000001')),
+                      [(channel, packet.payload) for channel, packet in ring.sent])
+        self.assertFalse(any(e['type'] == 'dictation-trigger' for e in self.events))
+        def audio(stamp, seq, frame):
+            return b'\xac\x52\x01' + struct.pack('>IIH', stamp, seq, 3) + bytes.fromhex('0100140003000C00020100') + frame
+        await self.client._handle_payload(audio(STAMP - 100, 1, b'old'))
+        self.assertFalse(any(e['type'] == 'ring-opus' for e in self.events))
+        await self.client._handle_payload(audio(STAMP, 1, b'one'))
+        await self.client._handle_payload(audio(STAMP, 3, b'tri'))
+        await self.client._handle_payload(audio(STAMP, 1, b'one'))
+        await self.client._handle_payload(bytes.fromhex('AA110104'))
+        await self.client._handle_payload(audio(STAMP, 2, b'two'))
+        await self.client._handle_payload(b'\xac\x54\x01' + struct.pack('>II', STAMP, 3))
+        opus = [e for e in self.events if e['type'] == 'ring-opus']
+        self.assertEqual([e['sequence'] for e in opus], [1, 2, 3])
+        self.assertEqual(opus[0], dict(type='ring-opus', timestamp=STAMP, sequence=1,
+                         sampleRate=16000, channels=1, frameDurationMs=20, frameSize=3, data='b25l'))
+        self.assertEqual([e['type'] for e in self.events if e['type'] in ('recording', 'ring-live-end')],
+                         ['recording', 'ring-live-end'])
+        self.assertTrue(ring.end_ack_files, 'Audio must be saved before AC55.')
+        self.assertEqual([p.payload for _, p in ring.sent].count(bytes.fromhex('AC510101FFFFFFFF00000001')), 1)
+
+    async def test_live_gaps_disarm_and_normal_sync_do_not_emit_unrelated_audio(self):
+        ring = await self.connect()
+        await self.client.arm_dictation(live_ring_audio=True)
+        with patch('spur_ring.transport.time.time', return_value=STAMP):
+            await self.client._handle_payload(bytes.fromhex('AA110102'))
+        packet = bytes.fromhex('AC52016553F1000000000100030100140003000C00020100F8FFFE')
+        await self.client._handle_payload(packet)
+        await self.client._handle_payload(bytes.fromhex('AC54016553F10000000002'))
+        self.assertEqual([e['timestamp'] for e in self.events if e['type'] == 'ring-live-error'], [STAMP])
+        self.assertFalse(any(e['type'] == 'ring-live-end' for e in self.events))
+        self.assertNotIn(bytes.fromhex('AC55016553F10001'), [p.payload for _, p in ring.sent])
+        await self.client.disarm_dictation()
+        await self.client._handle_payload(packet)
+        self.assertEqual(len([e for e in self.events if e['type'] == 'ring-opus']), 1)
+
+    async def test_verified_live_end_without_release_stops_once_and_late_release_is_deduplicated(self):
+        await self.connect()
+        await self.client.arm_dictation(live_ring_audio=True)
+        with patch('spur_ring.transport.time.time', return_value=STAMP):
+            await self.client._handle_payload(bytes.fromhex('AA110101'))
+        await self.client._handle_payload(bytes.fromhex('AC52016553F1000000000100030100140003000C00020100F8FFFE'))
+        await self.client._handle_payload(bytes.fromhex('AC54016553F10000000001'))
+        await self.client._handle_payload(bytes.fromhex('AA110104'))
+        events = [e for e in self.events if e['type'] in ('dictation-trigger', 'ring-live-end')]
+        self.assertEqual([(e['type'], e.get('action')) for e in events],
+                         [('dictation-trigger', 'start'), ('ring-live-end', None), ('dictation-trigger', 'stop')])
+        self.assertEqual(events[-1]['source'], 'audio-end')
+        self.assertFalse(any(e['type'] == 'recording-ready' for e in self.events))
         self.assertTrue(self.client._authenticated)
 
     async def test_disarm_requested_during_enable_never_emits_late_armed_state(self):
@@ -693,6 +798,37 @@ class TransportTests(unittest.IsolatedAsyncioTestCase):
         self.assertFalse(self.client._dictation_armed)
         self.assertFalse(self.client._touch_reporting_requested)
 
+    async def test_disconnect_that_leaves_gatt_open_can_be_retried(self):
+        ring = await self.connect()
+
+        async def failed_release():
+            # WinRT may notify before its underlying session is actually closed.
+            ring.disconnected_callback(ring)
+            await asyncio.sleep(0)
+            raise OSError('GATT release failed')
+
+        with patch.object(ring, 'disconnect', side_effect=failed_release):
+            with self.assertRaisesRegex(RuntimeError, 'Disconnect to retry'):
+                await self.client.disconnect()
+        self.assertIs(self.client._ble, ring)
+        self.assertTrue(ring.is_connected)
+        self.assertNotEqual(self.statuses()[-1], 'disconnected')
+        await self.client.disconnect()
+        self.assertIsNone(self.client._ble)
+        self.assertFalse(ring.is_connected)
+        self.assertEqual(self.statuses()[-1], 'disconnected')
+
+    async def test_disconnect_interrupts_outstanding_dictation_ack(self):
+        ring = await self.connect()
+        ring.behavior.auto_touch_reply = False
+        arm = asyncio.create_task(self.client.arm_dictation())
+        await self.wait_until(lambda: b'\x81\x63\x01' in [p.payload for _, p in ring.sent])
+        await asyncio.wait_for(self.client.disconnect(), 2)
+        with self.assertRaisesRegex(RuntimeError, 'stopped by disconnect'):
+            await arm
+        self.assertFalse(ring.is_connected)
+        self.assertFalse(self.client._dictation_armed)
+
     async def test_zero_summary_still_downloads_the_file_offered_by_the_ring(self):
         self.behaviors[ADDRESS_A] = Behavior(reported_files=0)
         ring = await self.connect()
@@ -726,6 +862,14 @@ class TransportTests(unittest.IsolatedAsyncioTestCase):
         self.assertEqual([len(p.payload) for _, p in ring.sent if p.payload[:2] == b'\xac\x21'], [12, 16])
         self.assertFalse(any(p.payload[:2] == b'\xac\x51' for _, p in ring.sent))
 
+    async def test_saved_mac_identifier_finds_only_the_selected_peripheral(self):
+        identifier = '54a4b177-7fe1-4235-9e6a-d8160312d0ad'
+        self.add_device(identifier, None, [], -92)
+        with patch.object(sys, 'platform', 'darwin'):
+            found = await self.client.scan(identifier.upper(), preserve_devices=True)
+        self.assertEqual([device['id'] for device in found], [identifier])
+
+    @patch.object(sys, 'platform', 'win32')
     async def test_selected_address_finds_unnamed_ring_without_substituting_nearer_ring(self):
         self.add_device(ADDRESS_B, None, [], -92)
         found = await self.client.scan(ADDRESS_B.lower())
@@ -735,6 +879,35 @@ class TransportTests(unittest.IsolatedAsyncioTestCase):
         self.assertNotIn(ADDRESS_A, self.client._devices)
         self.assertEqual(await self.client.scan('01:02:03:04:05:06'), [])
         self.assertFalse(self.client._devices)
+
+    @patch.object(sys, 'platform', 'win32')
+    async def test_background_search_keeps_foreground_choices_and_reports_authenticated_address(self):
+        await self.client.scan()
+        foreground = self.client._devices[ADDRESS_A]
+        self.assertEqual(await self.client.scan("01:02:03:04:05:06", preserve_devices=True), [])
+        self.assertIs(self.client._devices[ADDRESS_A], foreground)
+        found = await self.client.scan(ADDRESS_B, preserve_devices=True)
+        self.assertEqual([device["id"] for device in found], [ADDRESS_B])
+        self.assertIs(self.client._devices[ADDRESS_A], foreground)
+        await self.client.connect(ADDRESS_B)
+        authenticated = [event for event in self.events if event.get("type") == "status" and "address" in event]
+        self.assertEqual([(event["status"], event["address"]) for event in authenticated], [("connected", ADDRESS_B)])
+
+    async def test_generic_scan_includes_only_labelled_or_identifiable_advertisements(self):
+        unknown = "AA:BB:CC:DD:EE:03"
+        offline = "AA:BB:CC:DD:EE:04"
+        self.add_device(ADDRESS_B, None, [], -90)
+        self.add_device(unknown, None, [], -30)
+        known = frozenset({ADDRESS_B, offline})
+        found = await self.client.scan(known_addresses=known)
+        self.assertEqual({item['id'] for item in found}, {ADDRESS_A, ADDRESS_B})
+        self.assertEqual(self.scanner_calls, [{'timeout': 8, 'return_adv': True}])
+        self.behaviors[ADDRESS_B] = Behavior(missing_service=True)
+        with self.assertRaisesRegex(RuntimeError, 'expected AIZO FE02 service'):
+            await self.client.connect(ADDRESS_B)
+        self.assertFalse(self.client._authenticated)
+        found = await self.client.scan()
+        self.assertEqual([item['id'] for item in found], [ADDRESS_A])
 
     async def test_missing_inventory_and_silent_legacy_fall_back_to_realtime(self):
         self.behaviors[ADDRESS_A] = Behavior(realtime_only=True, silent_inventory=True, dedicated_file_channel=True)

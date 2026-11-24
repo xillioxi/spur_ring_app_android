@@ -74,3 +74,26 @@ test('an existing operation keeps its lock and selected address', async () => {
   assert.equal(ports.state.busy, 'scanning');
   assert.equal(ports.state.ringAddress, undefined);
 });
+
+test('disconnect during the library refresh prevents a pending connect-and-sync from opening the ring', async () => {
+  const ports = context();
+  const cancel = new AbortController();
+  let requested = false;
+  ports.refreshLibrary = async () => { cancel.abort(); ports.state.busy = 'disconnecting'; };
+  ports.request = async () => { requested = true; return { received: 0 }; };
+  await syncRingRecordings(ports, selected, cancel.signal);
+  assert.equal(requested, false);
+  assert.equal(ports.state.busy, 'disconnecting');
+  assert.equal(ports.state.lastSync, undefined);
+});
+
+test('a cancelled sync refreshes completed files and leaves the disconnect status in place', async () => {
+  const ports = context();
+  const cancel = new AbortController();
+  ports.request = async () => { cancel.abort(); ports.state.busy = 'disconnecting'; throw new Error('The operation was cancelled.'); };
+  ports.refreshLibrary = async () => { if (cancel.signal.aborted) ports.state.recordings = [file]; };
+  await syncRingRecordings(ports, undefined, cancel.signal);
+  assert.deepEqual(ports.state.recordings, [file]);
+  assert.equal(ports.state.busy, 'disconnecting');
+  assert.equal(ports.state.lastSync, undefined);
+});

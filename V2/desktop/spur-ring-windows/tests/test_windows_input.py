@@ -11,6 +11,7 @@ from spur_ring import windows_input as win
 class FakeAPI:
     def __init__(self):
         self.handle = 0x123456789
+        self.focus = 0x23456789A
         self.pid = os.getpid() + 100
         self.valid = True
         self.password = False
@@ -25,6 +26,9 @@ class FakeAPI:
 
     def foreground(self):
         return self.handle
+
+    def focused_window(self, handle):
+        return self.focus
 
     def valid_window(self, handle):
         return self.valid
@@ -52,7 +56,8 @@ class WindowsInputTests(unittest.TestCase):
         self.patcher = patch.object(win, "_get_api", return_value=self.api)
         self.patcher.start()
         self.addCleanup(self.patcher.stop)
-        self.target = {"handle": self.api.handle, "processId": self.api.pid, "label": "Example editor"}
+        self.target = {"handle": self.api.handle, "focusHandle": self.api.focus,
+                       "processId": self.api.pid, "label": "Example editor"}
 
     def test_input_uses_windows_native_alignment(self):
         expected = 40 if ctypes.sizeof(ctypes.c_void_p) == 8 else 28
@@ -78,6 +83,20 @@ class WindowsInputTests(unittest.TestCase):
 
     def test_capture_preserves_full_64_bit_handle(self):
         self.assertEqual(win.capture_target(), self.target)
+
+    def test_switching_to_a_sibling_field_in_the_same_application_refuses_input(self):
+        target = win.capture_target()
+        self.api.focus += 1
+        result = win.insert_text(target, "should stay in the transcript")
+        self.assertFalse(result["inserted"])
+        self.assertIn("focus", result["reason"])
+        self.assertIsNone(self.api.events)
+
+    def test_window_only_target_works_with_custom_editors_and_older_clients(self):
+        self.api.focus = 0
+        target = win.capture_target()
+        self.assertNotIn("focusHandle", target)
+        self.assertTrue(win.insert_text(target, "hello")["inserted"])
 
     def test_capture_excludes_shell_and_backend(self):
         with self.assertRaisesRegex(RuntimeError, "another application"):

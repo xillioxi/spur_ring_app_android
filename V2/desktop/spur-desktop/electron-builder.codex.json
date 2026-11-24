@@ -1,0 +1,7 @@
+{
+  "extends": "./electron-builder.json",
+  "directories": { "output": "../../../artifacts/Spur-Desktop-Windows-Codex-Claude-0.3.12" },
+  "extraResources": [
+    { "from": "resources/codex", "to": "codex" }
+  ]
+}

@@ -1,4 +1,105 @@
-# Spur Desktop 0.3.1
+# Spur Desktop 0.3.12
+
+## Dictate into an open Claude or Codex project
+
+Open the project in Claude or Codex and select the model in that app.
+Spur enables the ring button automatically when the ring connects and an
+ElevenLabs key is saved. When Spur shows **Ring button ready**, click the
+project's message box and record on the ring. This also works with Spur in
+the tray. If you previously chose a draft inside Spur, select **Use this
+project** on the **Open project** page to send words to the focused field.
+On macOS, grant Bluetooth access to connect the ring, Microphone access for
+computer audio, and Accessibility access to type into other apps.
+With the computer microphone, choose **Start project dictation** and focus the
+message box within three seconds. To start from the project window instead,
+choose **Use shortcut in project** and press the displayed shortcut while the
+message box has focus. Review and send the message in the project.
+That conversation supplies its own account, model, history, and tools. Spur
+only needs its ElevenLabs transcription credential for this workflow.
+
+For live dictation like the Android cross-app voice notes app, choose **Ring
+control** in Dictation. Hold the ring button and speak near the computer
+microphone. Provisional words update in the floating caption and the open
+project pane while you speak. Confirmed phrases go into the focused editor.
+If Windows cannot select a text field, the transcript stays available in Spur.
+
+**Chat in Spur** opens the separate embedded assistant described below.
+
+## Claude workspace
+
+Open **Claude → Chat in Spur**, enter your Anthropic API key, and select **Connect Claude**.
+Spur also accepts `ANTHROPIC_API_KEY` from its launch environment and encrypts
+keys saved through the app. Choose a project folder and one of the models
+available to your key. Type a request or arm the ring, stop recording, and add
+the transcript to your draft. Review it and select **Send to Claude**.
+The bundled Claude runtime streams replies and asks before running commands
+or changing files. Select a previous conversation to continue it in the same
+project. Each assistant has its own drafts and conversation history.
+Anthropic charges Claude API usage to the account that issued your key.
+
+## Codex workspace
+
+The **Codex** page connects Spur to a locally installed Codex CLI using its
+app-server protocol over stdio. Open **Codex → Chat in Spur → Connect Codex**, sign in if
+needed, choose a project folder and an available model, then type an instruction
+or select **Arm ring for Codex**. Audio uses the source and ElevenLabs key in
+Settings. Stop/disarm voice, add the transcript to the instruction, review it,
+and select **Send to Codex**. Nothing is submitted by a ring gesture alone.
+
+Spur displays streamed replies, commands, file changes, approval requests, and
+questions. **Stop task** interrupts an active turn. The conversation selector
+resumes conversations created by Spur for the selected project; it does not
+attach to an arbitrary open Codex desktop chat. Codex-bound dictation disables
+foreground text insertion. Select **Write where my cursor is** on Dictation to
+return to cursor insertion.
+
+The universal Mac build and the Windows Codex build bundle Codex CLI 0.172.0.
+Existing CLI sign-in is reused. **Choose Codex executable** supports a custom installation; on Windows
+select the native `codex.exe`, not a `.cmd`/`.ps1` launcher. The model selector
+uses the installed CLI's advertised models. If the service rejects a model due
+to CLI compatibility, update Codex CLI and reconnect. Codex account billing and
+ElevenLabs transcription billing are separate.
+
+Spur requests a project-scoped workspace-write sandbox and on-request approvals.
+Approvals are forwarded to the user, never automatically accepted. Unsupported
+tool interactions fail closed; requests granting a broader write root can only
+be declined in this version. Codex may read project files and edit files inside
+the project as part of an instruction. Transcripts and project context sent to
+Codex follow the connected Codex account's policies.
+
+`codex.json` beside the desktop preferences stores the executable path, selected
+model/project, and up to 100 Spur conversation references. Codex stores the
+actual conversations in its own local account data. Spur does not store a copy
+of Codex credentials. Unsent instructions remain in the UI across navigation and
+connection failures, but are not persisted when the app quits.
+
+To reproduce the Windows x64 package with Codex and Claude after preparing the
+normal ring-service resources, install `@openai/codex@0.172.0` in the repository's
+`.build-tools/codex-runtime` directory, then run from this desktop directory:
+
+```powershell
+node scripts/stage-codex.mjs
+npm run build
+npm test
+node node_modules/electron-builder/out/cli/cli.js --win dir --config electron-builder.codex.json
+```
+
+Staging downloads the pinned release's Apache license and notice and preserves
+the runtime's bundled third-party notices. Output is a separate directory under
+`artifacts/Spur-Desktop-Windows-Codex-Claude-0.3.12`. The standard Windows/macOS packaging
+configuration still supports an independently installed Codex CLI. Resumed
+conversations display up to 50 recent turns (300 visible items); Codex retains
+the underlying conversation history.
+
+On Windows, connecting a ring saves its Bluetooth address after authentication. Spur reconnects to that ring on launch and when it comes back into range. Choose **Disconnect** or **Stop auto-reconnect** to clear the saved ring.
+
+While connected, Spur downloads a finished ring recording to **Recordings** automatically, including when the window is in the tray. The download works with dictation off and requires no ElevenLabs key. After an automatic reconnection, Spur also checks the ring for recordings saved while it was away. Choose **Connect & sync** to retrieve existing recordings when connecting manually.
+
+**Disconnect** also works while ring dictation is armed or recording, while a connection is opening, and during a sync. It stops ring dictation, cancels pending transfers, and keeps previously saved recordings available in the library.
+
+Choose **Name ring** beside a nearby or connected ring to give it a name on this PC. Spur recognizes the same Bluetooth address on later scans, even if the ring advertises no name. Use **Rename** to edit or remove the label. Disconnecting keeps your label.
+
+Closing the Windows app window keeps Spur running in the system tray. Your ring connection, active dictation, and keyboard shortcut stay available. Click the Spur tray icon or launch Spur again to reopen the window. To exit completely, right-click the tray icon and choose **Quit Spur**.
 
 A Windows and macOS desktop app with a React/TypeScript interface, ElevenLabs speech
 recognition, a global dictation shortcut, and native Unicode text insertion.
@@ -14,11 +115,10 @@ On Windows, extract the complete release folder and open **Spur Desktop.exe**. K
 `resources` and other runtime files alongside it. Close the old Tk desktop app
 before connecting the ring from this version.
 
-On macOS, use the **arm64** DMG for an Apple Silicon Mac or the **x64** DMG for an
-Intel Mac. Open the DMG, drag **Spur Desktop** to **Applications**, eject the image,
-then open the installed app. macOS **13 Ventura or later** is required by the
-pinned Electron 45 runtime; see [Electron's supported platforms](https://github.com/electron/electron/blob/v45.3.1/README.md#platform-support).
-The two architectures use separate native helpers; there is no universal build.
+On an Intel or Apple Silicon Mac running **macOS 13 Ventura or later**, open
+`Spur-Desktop-0.3.12-macOS-universal.dmg`, drag **Spur Desktop** into
+**Applications**, eject the disk image, and open Spur from Applications.
+The same installer includes native components for both processors.
 
 In **Settings**, enter your ElevenLabs API key, choose the audio source and
 language, then save. Electron safeStorage protects the key using Windows DPAPI
@@ -27,34 +127,39 @@ or macOS Keychain. The renderer never receives the saved key. An existing
 
 Audio is sent to ElevenLabs only during an explicitly started dictation session
 or when you select a recording's **Transcribe** action. Your account's speech-to-text
-permissions, credits, internet access and microphone access are required.
+permissions, credits, and internet access are required. The two computer microphone
+modes also require permission to use the computer microphone.
 
 ## Three audio modes
 
 | Mode | Microphone | Behavior |
 | --- | --- | --- |
-| Ring control | Computer | Connect the ring, arm dictation, focus your destination, then press/release the ring to start/finish live transcription. It stays armed for the next phrase. |
+| Ring control | Computer | Focus your destination, hold the ring button to speak, and release to finish. Spur enables the button when the ring connects. |
 | Computer mic | Computer | Focus a text field and press **Ctrl+Shift+Space** on Windows or **Cmd+Shift+Space** on macOS to start or stop live dictation. Starting from the app gives you 3 seconds to select your destination. |
-| Ring audio | Ring | Arm dictation and make a recording on the ring. After it ends, the new file is synced and transcribed. This mode transcribes completed recordings. |
+| Ring microphone | Ring | Click the destination field and start recording when the ring button is ready. Live ring streams produce captions as you speak. Rings that supply only completed files are transcribed after release. |
 
 The Android app linked by the user uses `AudioRecord` on the **phone** for its
 live ElevenLabs stream; the AIZO ring supplies gesture/recording-state controls.
-Ring control reproduces that behavior with the computer's microphone. This
-release does not claim that the detected FE02 AIZO device streams its own mic
-live. The separate BAE8 SmartRing stream in that repository is another protocol.
+Ring control reproduces that behavior with the computer's microphone. Desktop
+ring microphone mode uses the AIZO 3.2.1 live Opus transfer when the connected firmware
+provides it. The separate BAE8 SmartRing stream uses another protocol.
 See the bundled `PROTOCOL_LIVE.md` for immutable source links and command evidence.
 
-Only committed ElevenLabs phrases are inserted into the selected foreground
-window. Partial text stays in the preview. If the destination changes, insertion
-pauses and the transcript remains available to copy. Windows may block input into
-elevated programs; run the destination normally. macOS requires Accessibility
+In **Settings**, turn on **Write where my cursor is** to insert text. Place
+the caret in a document or message, then record on the ring.
+**Pause ring button** suspends dictation until you choose **Enable ring button**.
+ElevenLabs drafts appear in the caption. Each confirmed phrase is typed once.
+Keep the field focused while you dictate. If Spur pauses insertion, check its
+on-screen notice. Your transcript remains available to copy from Dictation.
+Windows may block input into elevated programs. macOS requires Accessibility
 permission for cursor insertion. Native password fields are
 excluded. Dictation does not press Enter, send a message, or execute commands.
 
-For ring audio, automatic upload requires a physical recording start/stop cycle
-while armed and exactly one newly downloaded file whose device timestamp fits
-that cycle. Ambiguous or clock-skewed files remain local for manual transcription.
-Existing recordings are not automatically sent to ElevenLabs when arming.
+For ring audio, a physical recording while armed starts the live session. Spur
+decodes incoming ring audio to mono 16 kHz PCM and sends it to ElevenLabs Scribe
+Realtime. A completed live transcript is saved beside the matching recording.
+If the live feed is unavailable or incomplete, file transcription requires
+exactly one fresh recording whose timestamp fits the current recording cycle.
 
 ## Recordings and data
 
@@ -125,6 +230,31 @@ builds the UI, and packages Windows output under `release/win-unpacked`.
 No app signing certificate is included; this is a local unsigned test release.
 
 ## Build macOS DMGs
+
+The universal build uses one native helper build from each architecture.
+On each Mac, run the following from this directory, substituting its architecture
+(`x64` on Intel or `arm64` on Apple Silicon).
+
+```sh
+bash build-macos.sh --arch "$arch" --native-payload
+```
+
+Copy `build/macos-x64/native-x64.tar` and `build/macos-arm64/native-arm64.tar`
+to one Mac and pass their paths to the packaging script.
+
+```sh
+npm ci
+npm test
+npm run build
+node scripts/package-universal-mac.mjs /path/to/native-x64.tar /path/to/native-arm64.tar
+```
+
+The single installer is `release/Spur-Desktop-0.3.12-macOS-universal.dmg`.
+The macOS workflow mounts this image and tests its application on each architecture.
+The default universal build is ad-hoc signed. Gatekeeper may require approval
+the first time someone opens a downloaded copy.
+
+### Single-architecture builds
 
 Build on **macOS 13 or later**, using native **Python 3.11**, **Node 22.12+**, npm,
 and Xcode command line tools (`xcode-select --install`). Use an Apple Silicon Mac

@@ -3,8 +3,48 @@
 The Android repository supplied by the user does implement realtime ElevenLabs
 dictation. Its AIZO integration uses the ring as a start/stop controller and
 captures the **phone microphone**. The Windows equivalent uses the computer
-microphone. Saved audio recorded inside the AIZO ring remains a separate sync
-and transcription path.
+microphone for the ring-controlled computer microphone option. Windows also
+supports the ring microphone through the distinct AIZO 3.2.1 protocol below.
+
+## Live ring microphone on Windows
+
+The official AIZO RING 3.2.1 application (`com.eiot.be.ring`, build 300201)
+registers its real-time audio listener in `AiChatAc.rebindRingAudioListeners`.
+Its `BeDeviceConfigUtil.receiveDeviceRunningStateNotify` checks voice function
+1 and state 1 and starts `BeRealtimeAudioTransferUtil.startSyncFile`. Its
+AC52 handler forwards each Opus packet to the listener. The AI chat screen
+decodes this stream in `RingRealtimeAudioSession` while the recording is open.
+State 4 signals that a recording is ready. This behavior was checked in
+`classes2.dex` of the supplied application. Different firmware may only deliver
+the saved recording after release.
+
+`armDictation({liveRingAudio: true})` opts into this path. A physical long press
+or recording state triggers an AC51 request. On firmware where state 1 also
+means idle, a fresh first AC52 packet confirms the take. The helper matches
+the recording timestamp against the gesture with three seconds of clock
+tolerance and emits complete Opus frames in sequence. It ignores other queued
+recordings. After release it accepts trailing packets for up to five seconds.
+AC54 must account for every packet before the helper writes the raw frames,
+Ogg and metadata, reports the file, acknowledges it with AC55, and signals
+the end of the live take. If the release notification is missing, the verified
+end closes the take and a later duplicate release is ignored. Saved-file sync
+does not emit live audio.
+
+The Windows app also receives a `recording-ready` event with the connected
+`address` and a `source` of `state` or `touch`. An authenticated recording-ready
+state or a release following a recording start can request a local download
+while dictation is off. Repeated ready notifications for the same take are
+coalesced. When the live transfer has already saved the file, its verified end
+handles completion. After reconnect, a `syncRecordings` request with
+`storedOnlyIfReported` checks AA13 first. A confirmed zero count and byte size
+with no ready signal finishes that inventory check immediately. Missing
+inventory, pending recordings, and a ready signal use the normal transfer.
+
+The private bridge emits `ring-opus` with `timestamp` (Unix seconds),
+`sequence` (one-based), `data` (base64), `frameSize`, `frameDurationMs`,
+`sampleRate` and `channels`. `ring-live-end` carries the timestamp of a
+verified take. `ring-live-error` carries a message when an active take is
+incomplete. These paths are tested with simulated Bluetooth notifications.
 
 ## Reference source
 
@@ -76,11 +116,9 @@ ElevenLabs lifecycle. Notifications can report both state and touch for one
 gesture. Arming only enables controls; it does not itself begin capture.
 
 `RingClient.live_audio_capability()` reports implemented capabilities:
-`ring_triggered_dictation=true`, `ring_live_audio=false`, and
-`audio_source=computer_microphone`. This is not a claim that every possible
-firmware revision is incapable of live ring audio. No AIZO ring-audio stream was
-found in the recovered SDK or the supplied app's actual realtime dictation path.
-These new control APIs are tested against synthetic notifications; successful
+`ring_triggered_dictation=true`, `ring_live_audio=true` on Windows, and
+`audio_source=computer_microphone` for the default control-only call.
+These control APIs are tested against synthetic notifications; successful
 touch reporting on the user's physical firmware still needs a user-initiated
 acceptance run.
 

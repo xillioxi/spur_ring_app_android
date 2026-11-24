@@ -15,7 +15,8 @@ test('Windows retains the existing profile and shortcut', () => {
 });
 test('Mac package launches its native helper app executable', () => {
   const value = serviceLaunch(true, '/Applications/Spur Desktop.app/Contents/Resources', '/unused', '/Users/a/Library/Application Support/Spur/RingDesktop', 'darwin', 'arm64');
-  assert.equal(value.executable, '/Applications/Spur Desktop.app/Contents/Resources/ring-service/SpurRingService.app/Contents/MacOS/SpurRingService');
+  assert.equal(value.executable, '/Applications/Spur Desktop.app/Contents/Resources/ring-service/arm64/SpurRingService.app/Contents/MacOS/SpurRingService');
+  assert.equal(serviceLaunch(true, '/r', '/unused', '/data', 'darwin', 'x64').executable, '/r/ring-service/x64/SpurRingService.app/Contents/MacOS/SpurRingService');
   assert.deepEqual(value.args, ['--data-dir', '/Users/a/Library/Application Support/Spur/RingDesktop']);
   assert.ok(!value.executable.endsWith('.exe'));
 });

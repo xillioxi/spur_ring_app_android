@@ -37,6 +37,7 @@ async function collect(destination, platform) {
       }
     }
   }
+  await copyFile(path.join(project, 'node_modules/@anthropic-ai/claude-agent-sdk/LICENSE.md'), path.join(licenses, 'Anthropic-Claude-Agent-SDK.md'));
   // electron-builder moves the Mac ZIP's root notice into Contents/Resources
   // before afterPack. Prefer that actual packaged runtime over npm's dist copy.
   const chromium = await findChromiumNotice(destination, platform);

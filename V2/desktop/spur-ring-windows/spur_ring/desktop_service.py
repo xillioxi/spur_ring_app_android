@@ -18,7 +18,8 @@ import threading
 from typing import Any, BinaryIO, Callable
 
 from . import __version__
-from .transport import RingClient, RingDisconnectedError, diagnose
+from .protocol import AuthenticationError
+from .transport import RingClient, RingDisconnectedError, diagnose, normalize_bluetooth_mac, normalize_ring_identifier
 from . import macos_input, windows_input
 
 
@@ -68,6 +69,8 @@ class DesktopService:
         self._pending: dict[str, asyncio.Task] = {}
         self._loop: asyncio.AbstractEventLoop | None = None
         self._selected_address: str | None = None
+        self._radio_job: asyncio.Task | None = None
+        self._disconnect_lock = asyncio.Lock()
         self._recording_job: asyncio.Task | None = None
         self._received_paths: set[str] = set()
 
@@ -83,7 +86,8 @@ class DesktopService:
     def _failure(self, request_id: str, error: str) -> None:
         self.write({"kind": "result", "id": request_id, "error": error})
 
-    async def _sync_recordings(self, address: str | None, *, connect_first: bool = False) -> dict:
+    async def _sync_recordings(self, address: str | None, *, connect_first: bool = False,
+                               stored_only_if_reported: bool = False) -> dict:
         if self._recording_job is not None:
             raise RuntimeError("A recording sync is already running.")
         self._recording_job = asyncio.current_task()
@@ -94,7 +98,10 @@ class DesktopService:
                     if connect_first or attempt:
                         await self.client.connect(address)
                         self._selected_address = address
-                    result = await self.client.sync()
+                    if stored_only_if_reported and not attempt:
+                        result = await self.client.sync(stored_only_if_reported=True)
+                    else:
+                        result = await self.client.sync()
                     if attempt and self._received_paths:
                         result["received"] = max(result["received"], len(self._received_paths))
                     return result
@@ -108,23 +115,32 @@ class DesktopService:
             self._recording_job = None
             self._received_paths.clear()
 
-    async def dispatch(self, method: str, params: dict[str, Any]) -> Any:
-        """Explicit public operations; arbitrary attributes are never invoked."""
-        if method == "getInfo":
-            return {"version": __version__, "platform": sys.platform,
-                    "permissions": _input_permissions(),
-                    "capabilities": {"cursorInsertion": sys.platform in ("win32", "darwin"),
-                                     "ring_triggered_dictation": hasattr(self.client, "arm_dictation"),
-                                     "ring_live_audio": False}}
-        if method in ("getInputPermissions", "requestInputPermissions"):
-            return await asyncio.to_thread(_input_permissions, method == "requestInputPermissions")
-        if self._recording_job is not None and method in ("scan", "connect", "connectAndSync", "sync", "syncRecordings"):
-            raise RuntimeError("A recording sync is already running.")
+    async def _radio_request(self, method: str, params: dict[str, Any]) -> Any:
         if method == "scan":
             address = params.get("address")
-            return await self.client.scan(address) if address is not None else await self.client.scan()
-        if method == "diagnose":
-            return await diagnose()
+            if address is not None:
+                return await self.client.scan(address)
+            if sys.platform == "win32" and "knownAddresses" in params:
+                addresses = params["knownAddresses"]
+                if not isinstance(addresses, list):
+                    raise ValueError("Known ring addresses must be a list of Bluetooth MAC addresses.")
+                known = frozenset(normalize_bluetooth_mac(value) for value in addresses)
+                return await self.client.scan(known_addresses=known)
+            return await self.client.scan()
+        if method == "reconnectSavedRing":
+            if sys.platform not in ("win32", "darwin"):
+                raise RuntimeError("Saved ring reconnection requires Windows or macOS.")
+            address = normalize_ring_identifier(params.get("address"))
+            devices = await self.client.scan(address, preserve_devices=True)
+            device_id = next((d["id"] for d in devices if d["id"].upper() == address), None)
+            if device_id is None:
+                return {"connected": False, "reason": "not-found"}
+            try:
+                await self.client.connect(device_id)
+            except AuthenticationError as error:
+                return {"connected": False, "reason": "authentication-rejected", "message": str(error)}
+            self._selected_address = device_id
+            return {"connected": True}
         if method in ("connect", "connectAndSync"):
             address = params.get("address")
             if not isinstance(address, str) or not address or len(address) > 128:
@@ -134,19 +150,42 @@ class DesktopService:
             await self.client.connect(address)
             self._selected_address = address
             return {"connected": True}
+        result = await self._sync_recordings(
+            self._selected_address,
+            stored_only_if_reported=method == 'syncRecordings' and params.get('storedOnlyIfReported') is True)
+        return self.client.list_recordings() if method == "sync" else result
+
+    async def dispatch(self, method: str, params: dict[str, Any]) -> Any:
+        """Explicit public operations; arbitrary attributes are never invoked."""
+        if method == "getInfo":
+            return {"version": __version__, "platform": sys.platform,
+                    "permissions": _input_permissions(),
+                    "capabilities": {"cursorInsertion": sys.platform in ("win32", "darwin"),
+                                     "ring_triggered_dictation": hasattr(self.client, "arm_dictation"),
+                                     "ring_live_audio": sys.platform in ("win32", "darwin") and hasattr(self.client, "live_audio_capability")}}
+        if method in ("getInputPermissions", "requestInputPermissions"):
+            return await asyncio.to_thread(_input_permissions, method == "requestInputPermissions")
+        if method in ("scan", "connect", "connectAndSync", "sync", "syncRecordings", "reconnectSavedRing"):
+            if self._radio_job is not None or self._disconnect_lock.locked():
+                if self._recording_job is not None:
+                    raise RuntimeError("A recording sync is already running.")
+                raise RuntimeError("A Bluetooth operation is already running.")
+            self._radio_job = asyncio.current_task()
+            try:
+                return await self._radio_request(method, params)
+            finally:
+                self._radio_job = None
+        if method == "diagnose":
+            return await diagnose()
         if method == "disconnect":
-            job = self._recording_job
-            if job is not None:
-                job.cancel()
-                await asyncio.gather(job, return_exceptions=True)
-            self._selected_address = None
-            await self.client.disconnect()
+            async with self._disconnect_lock:
+                job = self._radio_job
+                if job is not None:
+                    job.cancel()
+                    await asyncio.gather(job, return_exceptions=True)
+                self._selected_address = None
+                await self.client.disconnect()
             return {"connected": False}
-        if method == "syncRecordings":
-            return await self._sync_recordings(self._selected_address)
-        if method == "sync":
-            await self._sync_recordings(self._selected_address)
-            return self.client.list_recordings()
         if method == "listRecordings":
             return self.client.list_recordings()
         if method in ("armDictation", "disarmDictation"):
@@ -154,7 +193,12 @@ class DesktopService:
                          else getattr(self.client, "disarm_dictation", None))
             if operation is None:
                 raise RuntimeError("This backend does not yet support ring dictation controls.")
-            await operation()
+            if method == "armDictation" and params.get("liveRingAudio") is True:
+                if sys.platform not in ("win32", "darwin"):
+                    raise RuntimeError("Live ring audio requires Windows or macOS.")
+                await operation(live_ring_audio=True)
+            else:
+                await operation()
             return {"armed": method == "armDictation"}
         if method == "captureTarget":
             excluded = params.get("excludedProcessIds", [])

@@ -1,5 +1,6 @@
 """Stored real-time Opus records, as transferred by AIZO RING 3.2.1."""
 from dataclasses import asdict
+from base64 import b64encode
 import hashlib
 import json
 from pathlib import Path
@@ -11,6 +12,38 @@ from .recordings import RecordingFile, TransferUpdate, _atomic_write
 
 QUERY = bytes.fromhex("AC510101FFFFFFFF00000001")
 RATES = {1: 8000, 2: 16000, 3: 32000, 4: 48000}
+
+
+class LiveRingRecording:
+    """Stream contiguous packets from one physical take and retain them for AC54."""
+
+    def __init__(self, output_dir: Path, started: float):
+        self.transfer = RealtimeRecordingTransfer(output_dir)
+        self.started = started
+        self.next_sequence = 1
+        self.stopped = False
+        self.announced = False
+
+    def accepts(self, payload: bytes) -> bool:
+        if len(payload) < 7 or payload[2] != 1:
+            return False
+        stamp = int.from_bytes(payload[3:7], 'big')
+        if self.transfer.timestamp is not None:
+            return stamp == self.transfer.timestamp
+        # AC51 can return queued audio. Only accept the beginning of this take,
+        # timestamped by the ring's clock (set at authenticated connect).
+        return (payload[:2] == b'\xac\x52' and len(payload) >= 11
+                and self.started - 3 <= stamp <= self.started + 3
+                and int.from_bytes(payload[7:11], 'big') == 1)
+
+    def ready_packets(self):
+        _, _, duration, frame_size, _, rate, channels = self.transfer.audio_format
+        while self.next_sequence in self.transfer.packets:
+            seq = self.next_sequence
+            self.next_sequence += 1
+            yield dict(timestamp=self.transfer.timestamp, sequence=seq, channels=channels,
+                       sampleRate=RATES[rate], frameDurationMs=duration, frameSize=frame_size,
+                       data=b64encode(self.transfer.packets[seq]).decode('ascii'))
 
 
 class RealtimeRecordingTransfer:

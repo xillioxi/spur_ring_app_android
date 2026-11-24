@@ -20,7 +20,7 @@ export function serviceLaunch(packaged: boolean, resources: string, appRoot: str
     ? paths.join(source, `.venv-macos-${arch}`, 'bin', 'python')
     : paths.resolve(appRoot, '../../..', '.build-tools/ring-windows-env/Scripts/python.exe'));
   const executable = packaged ? (platform === 'darwin'
-    ? paths.join(resources, 'ring-service', 'SpurRingService.app', 'Contents', 'MacOS', 'SpurRingService')
+    ? paths.join(resources, 'ring-service', arch, 'SpurRingService.app', 'Contents', 'MacOS', 'SpurRingService')
     : paths.join(resources, 'ring-service', 'SpurRingService.exe')) : python;
   const args = packaged ? ['--data-dir', dataDirectory] : [paths.join(source, 'service_launcher.py'), '--data-dir', dataDirectory];
   return { executable, args };

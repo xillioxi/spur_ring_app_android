@@ -9,6 +9,7 @@ import unittest
 from unittest.mock import AsyncMock, patch
 
 from spur_ring.desktop_service import DesktopService, MAX_LINE_BYTES, default_data_dir
+from spur_ring.protocol import AuthenticationError
 from spur_ring.transport import RingDisconnectedError
 
 
@@ -37,8 +38,8 @@ class FakeClient:
         self.calls.append("sync")
         return {"reported": 1, "received": 1}
 
-    async def arm_dictation(self):
-        self.calls.append("arm")
+    async def arm_dictation(self, *, live_ring_audio=False):
+        self.calls.append("arm-live" if live_ring_audio else "arm")
 
     async def disarm_dictation(self):
         self.calls.append("disarm")
@@ -69,16 +70,105 @@ class DesktopServiceTests(unittest.IsolatedAsyncioTestCase):
         self.assertIn("version", response["result"])
         self.assertEqual(self.service.client.calls, [])
 
+    async def test_desktop_live_arm_explicitly_enables_ring_audio(self):
+        for platform in ("win32", "darwin"):
+            with self.subTest(platform=platform), patch("spur_ring.desktop_service.sys.platform", platform):
+                result = await self.request("armDictation", {"liveRingAudio": True})
+                self.assertTrue(result["result"]["armed"])
+        self.assertEqual(self.service.client.calls, ["arm-live", "arm-live"])
+
     async def test_explicit_connection_and_sync(self):
         self.assertEqual((await self.request("connect", {"address": "AA:BB"}))["result"], {"connected": True})
         result = await self.request("sync")
         self.assertEqual(result["result"][0]["name"], "voice.ogg")
         self.assertEqual(self.service.client.calls, [("connect", "AA:BB"), "sync"])
 
+    async def test_reconnect_catchup_is_opt_in_and_does_not_change_manual_sync(self):
+        with patch.object(self.service.client, 'sync', AsyncMock(return_value={'received': 0})) as sync:
+            await self.request('syncRecordings', {'storedOnlyIfReported': True})
+            sync.assert_awaited_once_with(stored_only_if_reported=True)
+            sync.reset_mock()
+            await self.request('syncRecordings')
+            sync.assert_awaited_once_with()
+
     async def test_connect_and_sync_immediately_pulls_from_the_selected_ring(self):
         result = await self.request("connectAndSync", {"address": "AA:BB"})
         self.assertEqual(result["result"], {"reported": 1, "received": 1})
         self.assertEqual(self.service.client.calls, [("connect", "AA:BB"), "sync"])
+
+    async def test_restore_authenticates_only_the_exact_address(self):
+        address = "AA:BB:CC:DD:EE:01"
+        client = self.service.client
+        results = [{"id": "AA:BB:CC:DD:EE:02", "name": "Spur Ring"}, {"id": address.lower(), "name": "Spur Ring"}]
+        with patch("spur_ring.desktop_service.sys.platform", "win32"), \
+                patch.object(client, "scan", AsyncMock(return_value=results)) as scan:
+            response = await self.request("reconnectSavedRing", {"address": address.lower()})
+        scan.assert_awaited_once_with(address, preserve_devices=True)
+        self.assertEqual(response["result"], {"connected": True})
+        self.assertEqual(client.calls, [("connect", address.lower())])
+        self.assertEqual(self.service._selected_address, address.lower())
+
+    async def test_generic_windows_scan_accepts_only_explicit_labelled_addresses(self):
+        address = "AA:BB:CC:DD:EE:02"
+        with patch("spur_ring.desktop_service.sys.platform", "win32"), \
+                patch.object(self.service.client, "scan", AsyncMock(return_value=[])) as scan:
+            await self.request("scan", {"knownAddresses": [address.lower(), address]})
+            scan.assert_awaited_once_with(known_addresses=frozenset({address}))
+            for invalid in (address, ["wrong"], [1]):
+                self.assertIn("error", await self.request("scan", {"knownAddresses": invalid}))
+            self.assertEqual(scan.await_count, 1)
+            await self.request("scan", {"address": address, "knownAddresses": [address]})
+            scan.assert_awaited_with(address)
+        with patch("spur_ring.desktop_service.sys.platform", "darwin"), \
+                patch.object(self.service.client, "scan", AsyncMock(return_value=[])) as scan:
+            await self.request("scan", {"knownAddresses": [address]})
+            scan.assert_awaited_once_with()
+
+    async def test_restore_finds_the_mac_selected_corebluetooth_identifier(self):
+        address = "b84172e1-85c2-42ad-8345-9493302ec18a"
+        with patch("spur_ring.desktop_service.sys.platform", "darwin"), \
+                patch.object(self.service.client, "scan", AsyncMock(return_value=[{"id": address}])) as scan:
+            result = await self.request("reconnectSavedRing", {"address": address})
+        scan.assert_awaited_once_with(address.upper(), preserve_devices=True)
+        self.assertEqual(result["result"], {"connected": True})
+        self.assertEqual(self.service.client.calls, [("connect", address)])
+
+    async def test_restore_requires_a_valid_platform_identifier_before_scanning(self):
+        with patch.object(self.service.client, "scan", AsyncMock()) as scan:
+            for platform, address in (("darwin", "AA:BB:CC:DD:EE:01"), ("win32", None), ("win32", "not a MAC")):
+                with self.subTest(platform=platform, address=address), patch("spur_ring.desktop_service.sys.platform", platform):
+                    self.assertIn("error", await self.request("reconnectSavedRing", {"address": address}))
+            scan.assert_not_awaited()
+
+    async def test_restore_reports_offline_or_rejected_without_connecting_to_another_ring(self):
+        address = "AA:BB:CC:DD:EE:01"
+        client = self.service.client
+        with patch("spur_ring.desktop_service.sys.platform", "win32"), \
+                patch.object(client, "scan", AsyncMock(side_effect=[[{"id": "AA:BB:CC:DD:EE:02"}], [{"id": address}]])), \
+                patch.object(client, "connect", AsyncMock(side_effect=AuthenticationError("binding rejected"))) as connect:
+            offline = await self.request("reconnectSavedRing", {"address": address})
+            self.assertEqual(offline["result"], {"connected": False, "reason": "not-found"})
+            connect.assert_not_awaited()
+            refused = await self.request("reconnectSavedRing", {"address": address})
+            self.assertEqual(refused["result"], {"connected": False, "reason": "authentication-rejected", "message": "binding rejected"})
+            connect.assert_awaited_once_with(address)
+            self.assertIsNone(self.service._selected_address)
+
+    async def test_manual_disconnect_cancels_background_restore_and_sync_cannot_overlap(self):
+        address = "AA:BB:CC:DD:EE:01"
+        client = self.service.client
+        scanning = asyncio.Event()
+        async def scan(*args, **kwargs):
+            scanning.set()
+            await asyncio.Future()
+        with patch("spur_ring.desktop_service.sys.platform", "win32"), patch.object(client, "scan", scan):
+            self.service.accept(json.dumps({"id": "restore", "method": "reconnectSavedRing", "params": {"address": address}}))
+            await asyncio.wait_for(scanning.wait(), 2)
+            self.assertIn("already running", (await self.request("syncRecordings"))["error"])
+            self.assertIn("already running", (await self.request("connectAndSync", {"address": address}))["error"])
+            await self.request("disconnect")
+        self.assertIn({"kind": "result", "id": "restore", "error": "The operation was cancelled."}, self.output)
+        self.assertEqual(client.calls, ["disconnect"])
 
     async def test_link_loss_reconnects_to_same_ring_once_and_counts_distinct_files(self):
         client = self.service.client
@@ -120,18 +210,44 @@ class DesktopServiceTests(unittest.IsolatedAsyncioTestCase):
             await asyncio.wait_for(started.wait(), 2)
             blocked = await self.request("connectAndSync", {"address": "CC:DD"})
             self.assertIn("already running", blocked["error"])
+            self.assertIn("already running", (await self.request("reconnectSavedRing", {"address": "AA:BB:CC:DD:EE:01"}))["error"])
             await self.request("disconnect")
         self.assertIn({"kind": "result", "id": "transfer", "error": "The operation was cancelled."}, self.output)
         self.assertEqual(client.calls, [("connect", "AA:BB"), "disconnect"])
 
-    async def test_disconnect_can_run_while_scan_is_waiting(self):
+    async def test_disconnect_cancels_an_inflight_scan(self):
         self.service.accept(json.dumps({"id": "scan", "method": "scan"}))
         await self.service.client.scan_started.wait()
         await self.request("disconnect")
         self.assertIn("disconnect", self.service.client.calls)
-        self.service.client.finish_scan.set()
-        await self.service._pending["scan"]
-        self.assertIn({"kind": "event", "event": {"type": "log", "message": "Scan complete"}}, self.output)
+        self.assertIn({"kind": "result", "id": "scan", "error": "The operation was cancelled."}, self.output)
+        self.assertNotIn("scan", self.service._pending)
+
+    async def test_disconnect_cancels_manual_connect_and_blocks_reconnect_during_release(self):
+        connecting = asyncio.Event()
+        releasing = asyncio.Event()
+        finish_release = asyncio.Event()
+
+        async def blocked_connect(address):
+            connecting.set()
+            await asyncio.Future()
+
+        async def release():
+            releasing.set()
+            await finish_release.wait()
+
+        with patch.object(self.service.client, "connect", side_effect=blocked_connect), \
+                patch.object(self.service.client, "disconnect", side_effect=release):
+            self.service.accept(json.dumps({"id": "connecting", "method": "connect", "params": {"address": "AA:BB"}}))
+            await asyncio.wait_for(connecting.wait(), 2)
+            stopped = asyncio.create_task(self.request("disconnect", request_id="stop"))
+            await asyncio.wait_for(releasing.wait(), 2)
+            self.assertIn({"kind": "result", "id": "connecting", "error": "The operation was cancelled."}, self.output)
+            self.assertIn("already running", (await self.request("connect", {"address": "AA:CC"}))["error"])
+            finish_release.set()
+            self.assertEqual((await stopped)["result"], {"connected": False})
+        self.assertIsNone(self.service._selected_address)
+        self.assertTrue((await self.request("connect", {"address": "AA:CC"}))["result"]["connected"])
 
     async def test_native_input_delegated_with_exact_target(self):
         target = {"handle": 123, "processId": 999, "label": "Editor"}

@@ -1,4 +1,4 @@
-name: Spur Desktop macOS DMG
+name: Spur Desktop universal macOS DMG
 
 on:
   workflow_dispatch:
@@ -12,9 +12,14 @@ on:
 permissions:
   contents: read
 
+defaults:
+  run:
+    shell: bash
+    working-directory: V2/desktop/spur-desktop
+
 jobs:
-  macos:
-    name: macOS ${{ matrix.arch }}
+  native:
+    name: Build native ${{ matrix.arch }} runtimes
     strategy:
       fail-fast: false
       matrix:
@@ -24,11 +29,7 @@ jobs:
           - arch: x64
             runner: macos-15-intel
     runs-on: ${{ matrix.runner }}
-    timeout-minutes: 35
-    defaults:
-      run:
-        shell: bash
-        working-directory: V2/desktop/spur-desktop
+    timeout-minutes: 40
     steps:
       - uses: actions/checkout@v7.0.1
       - uses: actions/setup-node@v7.1.0
@@ -40,26 +41,69 @@ jobs:
         with:
           python-version: '3.11.9'
           architecture: ${{ matrix.arch }}
-      - name: Build and verify native app
-        run: bash build-macos.sh --arch '${{ matrix.arch }}' --python "$pythonLocation/bin/python3" --smoke-test
-        env:
-          CSC_IDENTITY_AUTO_DISCOVERY: 'false'
-      - name: Verify DMG filesystem
-        run: |
-          version="$(node -p "require('./package.json').version")"
-          hdiutil verify "release/Spur-Desktop-${version}-macOS-${{ matrix.arch }}.dmg"
-      - name: Upload DMG
-        uses: actions/upload-artifact@v7.0.2
+      - run: bash build-macos.sh --arch '${{ matrix.arch }}' --python "$pythonLocation/bin/python3" --native-payload
+      - uses: actions/upload-artifact@v7.0.2
         with:
-          name: Spur-Desktop-macOS-${{ matrix.arch }}
-          path: V2/desktop/spur-desktop/release/*.dmg
+          name: Spur-native-${{ matrix.arch }}
+          path: V2/desktop/spur-desktop/build/macos-${{ matrix.arch }}/native-${{ matrix.arch }}.tar
+          compression-level: 1
+          if-no-files-found: error
+          retention-days: 1
+
+  package:
+    name: Assemble one universal DMG
+    needs: native
+    runs-on: macos-15
+    timeout-minutes: 45
+    steps:
+      - uses: actions/checkout@v7.0.1
+      - uses: actions/setup-node@v7.1.0
+        with:
+          node-version: '22.23.4'
+          cache: npm
+          cache-dependency-path: V2/desktop/spur-desktop/package-lock.json
+      - uses: actions/download-artifact@v7.0.0
+        with:
+          pattern: Spur-native-*
+          path: ${{ runner.temp }}/spur-native
+          merge-multiple: true
+      - run: |
+          npm ci --no-audit --no-fund
+          npm test
+          npm run build
+          node scripts/package-universal-mac.mjs "$RUNNER_TEMP/spur-native/native-x64.tar" "$RUNNER_TEMP/spur-native/native-arm64.tar"
+      - uses: actions/upload-artifact@v7.0.2
+        with:
+          name: Spur-Desktop-macOS-universal
+          path: V2/desktop/spur-desktop/release/*-macOS-universal.dmg
+          compression-level: 0
           if-no-files-found: error
           retention-days: 7
-      - name: Upload startup diagnostics
-        if: always()
-        uses: actions/upload-artifact@v7.0.2
+
+  verify:
+    name: Install and launch universal DMG on ${{ matrix.arch }}
+    needs: package
+    strategy:
+      fail-fast: false
+      matrix:
+        include:
+          - arch: arm64
+            runner: macos-15
+          - arch: x64
+            runner: macos-15-intel
+    runs-on: ${{ matrix.runner }}
+    timeout-minutes: 20
+    steps:
+      - uses: actions/checkout@v7.0.1
+      - uses: actions/download-artifact@v7.0.0
         with:
-          name: Spur-Desktop-macOS-${{ matrix.arch }}-diagnostics
-          path: V2/desktop/spur-desktop/test-output/*
+          name: Spur-Desktop-macOS-universal
+          path: ${{ runner.temp }}/spur-dmg
+      - run: bash scripts/verify-universal-mac.sh "$RUNNER_TEMP"/spur-dmg/*.dmg '${{ matrix.arch }}'
+      - uses: actions/upload-artifact@v7.0.2
+        if: always()
+        with:
+          name: Spur-universal-verification-${{ matrix.arch }}
+          path: V2/desktop/spur-desktop/test-output/universal-*.json
           if-no-files-found: ignore
           retention-days: 7

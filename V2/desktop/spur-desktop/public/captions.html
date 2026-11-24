@@ -1,0 +1,25 @@
+<!doctype html>
+<html lang="en">
+<head>
+  <meta charset="utf-8">
+  <meta http-equiv="Content-Security-Policy" content="default-src 'none'; style-src 'unsafe-inline'; base-uri 'none'; form-action 'none'">
+  <title>Spur live captions</title>
+  <style>
+    * { box-sizing: border-box; }
+    html, body { margin: 0; overflow: hidden; background: transparent; }
+    body { padding: 3px 6px 7px; color: #f5faf8; font-family: "Segoe UI Variable", "Segoe UI", sans-serif; }
+    .caption { width: fit-content; max-width: 100%; margin: 0 auto; padding: 8px 16px; border: 1px solid #47615f; border-radius: 16px; background: rgba(22, 41, 44, .97); }
+    .caption:has(#transcript:not([hidden])) { width: 100%; }
+    #label { display: flex; align-items: center; gap: 8px; font-size: 12px; font-weight: 600; line-height: 16px; color: #cce1db; }
+    #label::before { content: ""; flex: none; width: 7px; height: 7px; background: #91d7bd; border-radius: 50%; }
+    #transcript { max-height: 66px; margin: 5px 0 0; overflow: hidden; overflow-wrap: anywhere; white-space: pre-wrap; font-size: 17px; line-height: 22px; }
+    #partial { color: #bfdbd4; }
+  </style>
+</head>
+<body>
+  <aside class="caption" aria-label="Spur live captions">
+    <div id="label"></div>
+    <p id="transcript" role="status" dir="auto" hidden><span id="committed"></span><span id="partial"></span></p>
+  </aside>
+</body>
+</html>

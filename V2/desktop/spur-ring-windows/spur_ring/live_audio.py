@@ -1,13 +1,8 @@
-"""AIZO ring controls for host-microphone dictation.
-
-The reference Android app's realtime dictation captures Android AudioRecord,
-not a live PCM stream from this AIZO ring. This module only decodes the ring's
-control notifications; it never opens a microphone or sends audio anywhere.
-See PROTOCOL_LIVE.md for the source and hardware distinction.
-"""
+"""AIZO control notifications used by host- and ring-microphone dictation."""
 from __future__ import annotations
 
 from dataclasses import dataclass
+import sys
 
 
 STATE_NAMES = {
@@ -55,7 +50,8 @@ def parse_touch_events(payload: bytes) -> list[TouchEvent]:
 def dictation_capability() -> dict:
     return {
         'ring_triggered_dictation': True,
-        'ring_live_audio': False,
+        'ring_live_audio': sys.platform == 'win32',
         'audio_source': 'computer_microphone',
-        'reason': 'The reference Android dictation uses the host microphone; this AIZO SDK exposes ring controls and saved recordings.',
+        'ring_audio_protocol': 'AC51/AC52',
+        'reason': 'Windows can request an Opus stream from supported AIZO firmware during a physical recording.',
     }

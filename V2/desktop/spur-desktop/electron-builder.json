@@ -1,5 +1,6 @@
 {
   "appId": "com.spur.ringdesktop", "productName": "Spur Desktop", "asar": true,
+  "asarUnpack": ["node_modules/@anthropic-ai/claude-agent-sdk-*/**/*"],
   "afterPack": "./scripts/collect-notices.mjs",
   "directories": { "output": "release" },
   "files": ["dist/**/*", "dist-electron/**/*", "package.json"],

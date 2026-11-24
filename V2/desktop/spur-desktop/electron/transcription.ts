@@ -3,6 +3,8 @@ import { readFile, stat } from 'node:fs/promises';
 import path from 'node:path';
 import { audioTypes } from './audio-import';
 
+export { textGap } from '../src/transcript-text';
+
 export function realtimeURL(language: string): string {
   const url = new URL('wss://api.elevenlabs.io/v1/speech-to-text/realtime');
   url.searchParams.set('model_id', 'scribe_v2_realtime');

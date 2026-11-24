@@ -1,6 +1,6 @@
 {
   "name": "spur-desktop",
-  "version": "0.3.1",
+  "version": "0.3.12",
   "private": true,
   "type": "module",
   "description": "Spur Ring desktop dictation for Windows and macOS",
@@ -13,6 +13,7 @@
     "package:mac": "bash build-macos.sh"
   },
   "dependencies": {
+    "@anthropic-ai/claude-agent-sdk": "0.3.331",
     "react": "19.3.1",
     "react-dom": "19.3.1",
     "ws": "8.22.2"

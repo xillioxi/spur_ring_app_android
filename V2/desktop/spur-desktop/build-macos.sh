@@ -1,5 +1,5 @@
 #!/usr/bin/env bash
-# Build natively on macOS. No Windows-to-macOS or universal-helper packaging.
+# Build a native app, or stage this Mac's sidecars for the universal DMG.
 set -euo pipefail
 
 project_dir="$(cd -- "$(dirname -- "${BASH_SOURCE[0]}")" && pwd)"
@@ -10,11 +10,12 @@ node_command="${SPUR_BUILD_NODE:-node}"
 signed=0
 notarize=0
 smoke_test=0
+native_payload=0
 
 usage() {
   cat <<'HELP'
 Usage: bash build-macos.sh [--arch arm64|x64] [--python PATH] [--node PATH]
-                            [--signed] [--notarize] [--smoke-test]
+                            [--signed] [--notarize] [--smoke-test] [--native-payload]
 
 Run on a native Apple Silicon Mac for arm64 or a native Intel Mac for x64.
 Requires Python 3.11, Node 22.12+, and Xcode command line tools.
@@ -23,6 +24,8 @@ certificate. --notarize additionally requires Apple notarization credentials.
 Nothing is uploaded to a release server. Notarization contacts Apple only when
 --notarize is explicitly supplied. --smoke-test opens the packaged app hidden
 and checks its UI/backend startup without scanning or connecting Bluetooth.
+--native-payload creates a tarball of native ring, Claude and Codex runtimes
+for scripts/package-universal-mac.mjs. Run once on each architecture.
 HELP
 }
 fail() { printf '%s\n' "Error: $*" >&2; exit 1; }
@@ -34,6 +37,7 @@ while (($#)); do
     --signed) signed=1; shift ;;
     --notarize) notarize=1; signed=1; shift ;;
     --smoke-test) smoke_test=1; shift ;;
+    --native-payload) native_payload=1; shift ;;
     --help|-h) usage; exit 0 ;;
     *) fail "Unknown argument: $1" ;;
   esac
@@ -43,7 +47,7 @@ done
 case "$(uname -m)" in arm64) native_arch=arm64 ;; x86_64) native_arch=x64 ;; *) fail 'Unsupported Mac architecture.' ;; esac
 [[ "$(sysctl -in sysctl.proc_translated 2>/dev/null || true)" != 1 ]] || fail 'Use a native terminal and native Python/Node, not Rosetta.'
 arch="${arch:-$native_arch}"
-[[ "$arch" == arm64 || "$arch" == x64 ]] || fail 'Architecture must be arm64 or x64; universal builds are not supported.'
+[[ "$arch" == arm64 || "$arch" == x64 ]] || fail 'Choose arm64 or x64 for this native build.'
 [[ "$arch" == "$native_arch" ]] || fail "Build $arch on a native $arch Mac. This machine is $native_arch."
 command -v xcrun >/dev/null || fail 'Install Xcode command line tools: xcode-select --install.'
 xcrun --find clang >/dev/null || fail 'Xcode command line tools are unavailable.'
@@ -105,6 +109,7 @@ for name in ('entitlements.mac.plist', 'entitlements.mac.inherit.plist'):
     with (project / 'build/macos' / name).open('wb') as output:
         plistlib.dump(entitlements, output)
 mac = config['mac']
+mac['binaries'] = [f'Contents/Resources/ring-service/{arch}/SpurRingService.app/Contents/MacOS/SpurRingService']
 mac['notarize'] = notarize
 mac['hardenedRuntime'] = signed
 mac['forceCodeSigning'] = signed
@@ -161,18 +166,38 @@ PY
 codesign --force --sign - --entitlements "$project_dir/build/macos/entitlements.mac.inherit.plist" "$helper_bundle"
 codesign --verify --deep --strict "$helper_bundle"
 
+# Each CPU needs its own PyInstaller bootloader and embedded Python archive.
+# Preserve the entire signed helper, its symlinks, and the assistant runtimes.
+if ((native_payload)); then
+  stage="$(mktemp -d "$build_dir/native.XXXXXX")"
+  trap 'rm -rf -- "$stage"' EXIT
+  mkdir -p "$stage/ring-service/$arch" "$stage/claude/$arch"
+  "$node_command" -e 'console.log(JSON.stringify({arch:process.arch,version:require("./package.json").version,commit:process.env.GITHUB_SHA}))' > "$stage/ring-service/$arch/native-build.json"
+  ditto "$helper_bundle" "$stage/ring-service/$arch/SpurRingService.app"
+  ELECTRON_SKIP_BINARY_DOWNLOAD=1 npm ci --no-fund --no-audit
+  claude_pkg="node_modules/@anthropic-ai/claude-agent-sdk-darwin-$arch"
+  ditto "$claude_pkg" "$stage/claude/$arch"
+  "$stage/claude/$arch/claude" --version
+  npm install --prefix "$build_dir/codex-runtime" --ignore-scripts --no-package-lock --no-fund --no-audit "@openai/codex-darwin-$arch@npm:@openai/codex@0.172.0-darwin-$arch"
+  "$node_command" scripts/stage-codex.mjs "$build_dir/codex-runtime/node_modules/@openai/codex-darwin-$arch" "$stage/codex/$arch"
+  "$stage/codex/$arch/bin/codex" --version
+  COPYFILE_DISABLE=1 tar -C "$stage" -cf "$build_dir/native-$arch.tar" ring-service codex claude
+  printf 'Native resources ready: %s\n' "$build_dir/native-$arch.tar"
+  exit 0
+fi
+
 # Replace only this generated staging directory. Do not copy one architecture
 # over another's old files, or put Windows .exe/DLL files into a Mac release.
-"$build_python" - "$project_dir/resources/ring-service" "$helper_bundle" <<'PY'
+"$build_python" - "$project_dir/resources/ring-service" "$helper_bundle" "$arch" <<'PY'
 import shutil, sys
 from pathlib import Path
-destination, source = map(Path, sys.argv[1:])
+destination, source = map(Path, sys.argv[1:3])
 expected = Path.cwd() / 'resources/ring-service'
 if destination.resolve() != expected.resolve() or source.name != 'SpurRingService.app':
     raise SystemExit('Unexpected generated service staging path.')
 if destination.exists(): shutil.rmtree(destination)
-destination.mkdir(parents=True)
-shutil.copytree(source, destination / source.name, symlinks=True)
+(destination / sys.argv[3]).mkdir(parents=True)
+shutil.copytree(source, destination / sys.argv[3] / source.name, symlinks=True)
 PY
 
 npm ci --no-fund --no-audit

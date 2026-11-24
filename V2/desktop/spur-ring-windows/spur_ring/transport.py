@@ -12,6 +12,8 @@ import importlib.metadata
 from pathlib import Path
 import platform
 import re
+import sys
+import time
 from typing import Callable
 
 from . import __version__
@@ -23,7 +25,7 @@ from .protocol import (
     validate_binding_response,
 )
 from .recordings import RecordingTransfer
-from .realtime_recordings import QUERY as REALTIME_QUERY, RealtimeRecordingTransfer
+from .realtime_recordings import QUERY as REALTIME_QUERY, LiveRingRecording, RealtimeRecordingTransfer
 from .storage import DesktopStorage
 
 SECOND_RESPONSE_UUID = '0000013a-0000-1000-8000-00805f9b34fb'
@@ -31,6 +33,7 @@ AUTHENTICATION_TIMEOUT = 60
 TOUCH_REPORT_TIMEOUT = 8
 SUMMARY_TIMEOUT = 3
 FIRST_PACKET_TIMEOUT = 10
+LIVE_END_GRACE = 5
 
 
 class RingDisconnectedError(RuntimeError):
@@ -38,6 +41,20 @@ class RingDisconnectedError(RuntimeError):
 
     def __init__(self):
         super().__init__('The ring disconnected. Saved recordings are retained.')
+
+
+def normalize_bluetooth_mac(address: str) -> str:
+    if not isinstance(address, str) or not re.fullmatch(r'(?:[0-9A-Fa-f]{2}:){5}[0-9A-Fa-f]{2}', address):
+        raise ValueError('Enter the Bluetooth MAC address shown in the ring app.')
+    return address.upper()
+
+
+def normalize_ring_identifier(address: str) -> str:
+    if sys.platform != 'darwin':
+        return normalize_bluetooth_mac(address)
+    if not isinstance(address, str) or not re.fullmatch(r'[0-9a-fA-F]{8}-(?:[0-9a-fA-F]{4}-){3}[0-9a-fA-F]{12}', address):
+        raise ValueError('Select a ring identified by macOS Bluetooth.')
+    return address.upper()
 
 
 async def diagnose() -> dict:
@@ -122,8 +139,11 @@ class RingClient:
         self._sequence = 0
         self._generation = 0
         self._unexpected_disconnect = False
+        self._releasing_link = False
         self._authenticated = False
         self._working_state: int | None = None
+        self._recording_in_progress = False
+        self._ready_reported = False
         self._binding = None
         self._auth_future = None
         self._sync_future = None
@@ -141,6 +161,12 @@ class RingClient:
         self._last_sync_activity = 0.0
         self._missing_ack_logged = False
         self._dictation_armed = False
+        self._live_requested = False
+        self._live: LiveRingRecording | None = None
+        self._live_end_timer = None
+        self._live_done = asyncio.Event()
+        self._last_live_stamp = None
+        self._live_stop_sent = True
         self._dictation_intent = 0
         self._touch_reporting_requested = False
         self._touch_future = None
@@ -151,9 +177,9 @@ class RingClient:
     def _log(self, message: str):
         self._emit('log', message=message)
 
-    def _state(self, status: str, message: str = ''):
+    def _state(self, status: str, message: str = '', **details):
         self._status = status
-        self._emit('status', status=status, message=message)
+        self._emit('status', status=status, message=message, **details)
 
     def list_recordings(self):
         return self.storage.list_recordings()
@@ -162,8 +188,8 @@ class RingClient:
         """Describe AIZO controls separately from the source of live audio."""
         return dictation_capability()
 
-    async def arm_dictation(self):
-        """Explicitly enable ring controls; does not capture microphone audio."""
+    async def arm_dictation(self, *, live_ring_audio=False):
+        """Arm physical controls, optionally requesting ring audio during a take."""
         self._dictation_intent += 1
         intent = self._dictation_intent
         async with self._lifecycle_lock:
@@ -172,17 +198,23 @@ class RingClient:
             if not self._authenticated or self._ble is None or not self._ble.is_connected:
                 raise RuntimeError('Connect and authenticate the ring before arming dictation.')
             if self._dictation_armed:
+                if self._live_requested != live_ring_audio:
+                    self._reset_live()
+                self._live_requested = live_ring_audio
                 return
             await self._set_touch_reporting(True)
             if intent != self._dictation_intent:
                 return
             self._dictation_armed = True
+            self._live_requested = live_ring_audio
             self._emit('dictation-state', armed=True)
 
     async def disarm_dictation(self):
         """Stop emitting capture triggers, then disable ring touch reporting."""
         self._dictation_intent += 1
         self._dictation_armed = False
+        self._live_requested = False
+        self._reset_live()
         self._emit('dictation-state', armed=False)
         async with self._lifecycle_lock:
             self._dictation_armed = False
@@ -209,14 +241,13 @@ class RingClient:
                 future.cancel()
             self._touch_future = None
 
-    async def scan(self, address: str | None = None) -> list[dict]:
+    async def scan(self, address: str | None = None, *, preserve_devices: bool = False,
+                   known_addresses: frozenset[str] = frozenset()) -> list[dict]:
         from bleak import BleakScanner
         if self._ble is not None:
             raise RuntimeError('Disconnect the ring before scanning again.')
         if address is not None:
-            if not isinstance(address, str) or not re.fullmatch(r'(?:[0-9A-Fa-f]{2}:){5}[0-9A-Fa-f]{2}', address):
-                raise ValueError('Enter the Bluetooth MAC address shown in the ring app.')
-            address = address.upper()
+            address = normalize_ring_identifier(address)
         self._log(f'Scanning for {address}…' if address else 'Scanning nearby Bluetooth advertisements for 8 seconds…')
         try:
             if address is None:
@@ -240,13 +271,15 @@ class RingClient:
                         'Check Bluetooth is enabled and a BLE adapter is available.')
             raise RuntimeError(f'Bluetooth scan failed: {error}. {guidance}') from error
         found = []
-        self._devices.clear()
+        if not preserve_devices:
+            self._devices.clear()
         for device, advertisement in results:
             name = advertisement.local_name or device.name or 'Unnamed Bluetooth device'
             services = {value.lower() for value in advertisement.service_uuids}
             # A selected ring can advertise without a name. Connect verifies FE02
             # and the binding reply before allowing any recording request.
-            compatible = (address is not None or ADVERTISED_SERVICE_UUID.lower() in services or
+            compatible = (address is not None or device.address.upper() in known_addresses or
+                          ADVERTISED_SERVICE_UUID.lower() in services or
                           SERVICE_UUID.lower() in services or
                           ('RING' in name.upper() and any(word in name.upper() for word in ('AIZO', 'DREAME', 'SPUR'))))
             if not compatible:
@@ -274,6 +307,10 @@ class RingClient:
         self._unexpected_disconnect = False
         self._codec.reset()
         self._working_state = None
+        self._recording_in_progress = False
+        self._ready_reported = False
+        self._last_live_stamp = None
+        self._live_stop_sent = True
         self._authenticated = False
         self._binding = None
         self._missing_ack_logged = False
@@ -316,7 +353,7 @@ class RingClient:
             await asyncio.wait_for(self._auth_future, timeout=AUTHENTICATION_TIMEOUT)
             self._require_link(client, generation)
             self._authenticated = True
-            self._state('connected', f'Authenticated ring {device.address}. Ready to sync.')
+            self._state('connected', f'Authenticated ring {device.address}. Ready to sync.', address=device.address)
             self._log('Authenticated directly over Bluetooth. No phone or cloud connection is used.')
         except asyncio.TimeoutError as error:
             phase = self._status
@@ -351,12 +388,14 @@ class RingClient:
         loop.call_soon_threadsafe(enqueue)
 
     def _connection_lost(self, generation):
-        if generation != self._generation or self._unexpected_disconnect:
+        if generation != self._generation or self._unexpected_disconnect or self._releasing_link:
             return
         self._unexpected_disconnect = True
         self._authenticated = False
         self._dictation_intent += 1
         self._dictation_armed = False
+        self._live_requested = False
+        self._reset_live()
         self._emit('dictation-state', armed=False)
         self._abort(RingDisconnectedError())
         self._state('disconnected', 'The ring disconnected.')
@@ -436,7 +475,14 @@ class RingClient:
                     self._emit('ring-touch', event=event.event, action=event.action,
                                time_bytes=event.time_bytes.hex())
                     if self._dictation_armed and event.dictation_action:
-                        self._emit('dictation-trigger', action=event.dictation_action, source='touch')
+                        await self._physical_trigger(event.dictation_action, 'touch')
+                    if event.dictation_action == 'start':
+                        self._recording_in_progress = True
+                        self._ready_reported = False
+                    elif event.dictation_action == 'stop' and self._recording_in_progress:
+                        # Some rings report release without a following ready state.
+                        self._working_state = 4
+                        self._recording_ready('touch')
             return
         if payload.startswith(b'\xaa\x11'):
             if len(payload) < 4:
@@ -444,6 +490,7 @@ class RingClient:
                 return
             await self._send(b'\xaa\x12\x01')
             if payload[2] == 1:
+                last_state = self._working_state
                 self._working_state = payload[3]
                 name = STATE_NAMES.get(payload[3], f'unknown ({payload[3]})')
                 self._log('Ring state: ' + name)
@@ -451,7 +498,20 @@ class RingClient:
                     self._emit('ring-state', state=payload[3], name=name,
                                remaining_time=int.from_bytes(payload[4:6], 'big') if len(payload) >= 6 else None)
                     if self._dictation_armed and payload[3] in (2, 4):
-                        self._emit('dictation-trigger', action='start' if payload[3] == 2 else 'stop', source='state')
+                        await self._physical_trigger('start' if payload[3] == 2 else 'stop', 'state')
+                    elif self._dictation_armed and self._live_requested and payload[3] == 1 and last_state != 1:
+                        # AIZO 3.2.1 begins the real-time upload here. Older SDK
+                        # versions call this idle. Wait for dated audio to confirm.
+                        await self._physical_trigger('start', 'state', probe=True)
+                    if payload[3] in (2, 3):
+                        self._recording_in_progress = True
+                        self._ready_reported = False
+                    elif payload[3] == 4:
+                        self._recording_ready('state')
+                    elif payload[3] in (0, 1) and self._sync_future is None and last_state != 5:
+                        # State 1 is the only start cue on some firmware. State 0
+                        # during an inventory query is housekeeping, not a new take.
+                        self._ready_reported = False
                 if payload[3] in (2, 3) and self._sync_future is not None:
                     self._abort(RuntimeError('The ring is recording or paused; stop recording before syncing.'))
             return
@@ -464,6 +524,9 @@ class RingClient:
                                                      'bytes': int.from_bytes(payload[5:9], 'big')})
             return
         if payload[:2] in (b'\xac\x22', b'\xac\x24', b'\xac\x52', b'\xac\x54'):
+            if self._live is not None and payload[1] in (0x52, 0x54):
+                await self._receive_live(payload)
+                return
             if self._sync_future is None or self._sync_future.done() or self._transfer is None:
                 return
             realtime = payload[1] in (0x52, 0x54)
@@ -520,6 +583,131 @@ class RingClient:
                     future.set_result(None)
             return
         self._log(f'Received ring message {payload[:2].hex().upper()} ({len(payload)} bytes).')
+
+    def _reset_live(self):
+        if self._live_end_timer is not None:
+            self._live_end_timer.cancel()
+            self._live_end_timer = None
+        self._live = None
+        self._live_done.set()
+
+    def _expire_live(self, take):
+        if self._live is take:
+            if take.announced:
+                self._emit('ring-live-error', timestamp=take.transfer.timestamp,
+                           message='The ring did not finish the live audio transfer. Its saved recording can still be synced.')
+            self._reset_live()
+
+    def _file_endpoint(self):
+        dedicated = self._ble.services.get_characteristic(SECOND_COMMAND_UUID)
+        return (SECOND_COMMAND_UUID if dedicated and
+                {'write', 'write-without-response'}.intersection(dedicated.properties) else COMMAND_UUID)
+
+    def _recording_ready(self, source):
+        if self._ready_reported or not self._authenticated or self._ble is None:
+            return
+        observed_take = self._recording_in_progress
+        self._ready_reported = True
+        self._recording_in_progress = False
+        # Ignore inventory/transfer echoes unless an actual new take intervened.
+        if self._sync_future is None or observed_take:
+            self._emit('recording-ready', address=self._ble.address, source=source)
+
+    async def _physical_trigger(self, action, source, *, probe=False):
+        if not self._live_requested:
+            self._emit('dictation-trigger', action=action, source=source)
+            return
+        if action == 'stop':
+            if not self._live_stop_sent:
+                self._live_stop_sent = True
+                self._emit('dictation-trigger', action=action, source=source)
+            if self._live is not None and not self._live.stopped:
+                if self._live_end_timer is not None:
+                    self._live_end_timer.cancel()
+                self._live.stopped = True
+                self._live_end_timer = asyncio.get_running_loop().call_later(LIVE_END_GRACE, self._expire_live, self._live)
+            return
+        if self._sync_future is not None:
+            return
+        if self._live is not None and self._live.stopped:
+            if probe:
+                return
+            self._expire_live(self._live)
+        take = self._live
+        if take is not None and not take.announced and not probe and time.time() - take.started > 3:
+            self._reset_live()  # A previous idle-state probe produced no audio.
+            take = None
+        first = take is None
+        if first:
+            address = ''.join(char for char in self._ble.address if char.isalnum())
+            take = self._live = LiveRingRecording(self.storage.recordings / address, time.time())
+            self._live_done.clear()
+            if probe:
+                self._live_end_timer = asyncio.get_running_loop().call_later(
+                    FIRST_PACKET_TIMEOUT, self._expire_live, take)
+        if not probe and not take.announced:
+            if self._live_end_timer is not None:
+                self._live_end_timer.cancel()
+                self._live_end_timer = None
+            take.announced = True
+            self._live_stop_sent = False
+            self._emit('dictation-trigger', action='start', source=source)
+        if first:
+            try:
+                await self._send(REALTIME_QUERY, self._file_endpoint())
+            except Exception as error:
+                if self._live is take:
+                    self._reset_live()
+                    if take.announced:
+                        self._emit('ring-live-error', message=str(error))
+
+    async def _receive_live(self, payload):
+        take = self._live
+        if not take.accepts(payload):
+            return
+        stamp = int.from_bytes(payload[3:7], 'big')
+        if stamp == self._last_live_stamp or (take.stopped and not take.announced):
+            return
+        try:
+            if payload[1] == 0x52:
+                take.transfer.feed(payload)
+                if not take.announced:
+                    if self._live_end_timer is not None:
+                        self._live_end_timer.cancel()
+                        self._live_end_timer = None
+                    take.announced = True
+                    self._live_stop_sent = False
+                    self._emit('dictation-trigger', action='start', source='state')
+                for packet in take.ready_packets():
+                    self._emit('ring-opus', **packet)
+                return
+            # A successful end ACK permits the ring to discard the recording.
+            # Persist and verify the entire file first, as in ordinary sync.
+            update = await asyncio.to_thread(take.transfer.feed, payload)
+            if self._live is not take or not self._authenticated:
+                return
+            for file in update.completed:
+                self._emit('recording', file={'name': file.ogg_path.name, 'path': str(file.ogg_path),
+                           'size': file.ogg_path.stat().st_size, 'timestamp': file.timestamp})
+            await self._send(update.commands[0], self._file_endpoint())
+            if self._live is take:
+                self._last_live_stamp = stamp
+                self._recording_in_progress = False
+                self._ready_reported = True
+                if take.announced:
+                    self._emit('ring-live-end', timestamp=stamp)
+                    # Firmware can finish the stream without a separate release
+                    # notification. AC54 has verified the same physical take.
+                    if not self._live_stop_sent:
+                        self._live_stop_sent = True
+                        self._working_state = 4
+                        self._emit('dictation-trigger', action='stop', source='audio-end')
+                self._reset_live()  # Do not request another take from the queue.
+        except Exception as error:
+            if self._live is take:
+                self._reset_live()
+                if take.announced:
+                    self._emit('ring-live-error', timestamp=stamp, message=str(error))
 
     def _require_link(self, client, generation):
         if self._unexpected_disconnect:
@@ -579,13 +767,21 @@ class RingClient:
             self._log('Checking the AIZO real-time recording queue (AC51).')
             await self._send(REALTIME_QUERY, self._file_channel)
 
-    async def sync(self):
+    async def sync(self, *, stored_only_if_reported=False):
         client, generation = self._ble, self._generation
         if not self._authenticated and not self._unexpected_disconnect:
             raise RuntimeError('Connect and authenticate the ring first.')
         self._require_link(client, generation)
         if self._sync_future is not None:
             raise RuntimeError('A recording sync is already running.')
+        while self._live is not None:
+            if self._live.stopped:
+                await self._live_done.wait()  # Physical release starts a bounded grace timer.
+                self._require_link(client, generation)
+            elif self._live.announced:
+                raise RuntimeError('Stop recording before syncing.')
+            else:
+                self._reset_live()  # An unconfirmed idle-state probe yields to explicit sync.
         # This firmware also emits state 0 during an authenticated inventory
         # check. Like a missing state, it supplies no recording/paused signal.
         if self._working_state not in (None, 0, 1, 4):
@@ -598,6 +794,7 @@ class RingClient:
         self._state('syncing', 'Checking ring recordings…')
         self._emit('progress', progress=0)
         try:
+            ready_before_query = self._working_state == 4 or self._ready_reported
             await self._send(b'\xaa\x13\x01')
             try:
                 summary = await asyncio.wait_for(self._summary_future, timeout=SUMMARY_TIMEOUT)
@@ -609,13 +806,15 @@ class RingClient:
             if self._sync_future.done():
                 await self._sync_future
             self._require_link(client, generation)
+            if (stored_only_if_reported and summary == {'count': 0, 'bytes': 0}
+                    and not ready_before_query and not self._ready_reported and self._working_state != 4):
+                self._emit('progress', progress=100)
+                return {'reported': 0, 'received': 0, 'inventoryOnly': True,
+                        'notice': 'The ring reported no stored recordings.'}
             address = ''.join(character for character in client.address if character.isalnum())
             output = self.storage.recordings / address
             # Vendor BtHelper.requestHex(bytes, "") routes AC21/23/25 through HEX_WRITE_ECG.
-            dedicated = client.services.get_characteristic(SECOND_COMMAND_UUID)
-            self._file_channel = (SECOND_COMMAND_UUID if dedicated and
-                                  {'write', 'write-without-response'}.intersection(dedicated.properties)
-                                  else COMMAND_UUID)
+            self._file_channel = self._file_endpoint()
             self._log(f'Recording transfer write channel: {self._file_channel[4:8]}.')
             self._transfer = RecordingTransfer(output, padded_request=False)
             self._log('Requesting stored recordings (AIZO 3.2.1, 12-byte AC21).')
@@ -679,6 +878,10 @@ class RingClient:
                 self._state('connected', 'Ready to sync.')
 
     async def disconnect(self):
+        # Do not wait out an outstanding 8164 acknowledgment before closing GATT.
+        self._dictation_intent += 1
+        if self._touch_future is not None and not self._touch_future.done():
+            self._touch_future.set_exception(RuntimeError('Ring controls were stopped by disconnect.'))
         async with self._lifecycle_lock:
             self._unexpected_disconnect = False
             await self._disconnect()
@@ -686,31 +889,45 @@ class RingClient:
     async def _disconnect_generation(self, generation):
         async with self._lifecycle_lock:
             if generation == self._generation:
-                await self._disconnect()
+                try:
+                    await self._disconnect()
+                except RuntimeError as error:
+                    self._emit('error', message=str(error))
 
     async def _disconnect(self):
         self._dictation_intent += 1
         self._dictation_armed = False
+        self._live_requested = False
+        self._reset_live()
         self._emit('dictation-state', armed=False)
         # Disable only if this explicit dictation session requested reporting.
         # Do not wait on a reply while tearing down the notification reader.
         if self._touch_reporting_requested and self._ble is not None and self._ble.is_connected:
             with suppress(Exception):
-                await self._send(b'\x81\x63\x00')
+                await asyncio.wait_for(self._send(b'\x81\x63\x00'), timeout=1)
         self._touch_reporting_requested = False
-        self._generation += 1
         self._authenticated = False
         self._abort(RuntimeError('Connection closed.'))
-        client, self._ble = self._ble, None
+        client = self._ble
         reader, self._reader = self._reader, None
         if reader is not None and reader is not asyncio.current_task():
             reader.cancel()
             with suppress(asyncio.CancelledError, Exception):
                 await reader
-        if client is not None:
-            with suppress(Exception):
-                await asyncio.wait_for(client.disconnect(), timeout=5)
         self._queue = None
         self._binding = None
         self._codec.reset()
+        if client is not None:
+            # WinRT synthesizes its disconnect callback before GATT teardown
+            # completes. Only report success once the client releases its session.
+            self._releasing_link = True
+            try:
+                with suppress(Exception):
+                    await asyncio.wait_for(client.disconnect(), timeout=5)
+                if client.is_connected:
+                    raise RuntimeError('Bluetooth still has the ring connection open. Select Disconnect to retry.')
+            finally:
+                self._releasing_link = False
+        self._ble = None
+        self._generation += 1
         self._state('disconnected', 'Ring disconnected.')

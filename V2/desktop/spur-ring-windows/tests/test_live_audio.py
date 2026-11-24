@@ -1,5 +1,6 @@
 """Source-backed AIZO dictation controls; no microphone or network access."""
 import unittest
+from unittest.mock import patch
 
 from spur_ring.live_audio import dictation_capability, parse_touch_events
 
@@ -21,10 +22,11 @@ class RingControlTests(unittest.TestCase):
             with self.subTest(raw=raw), self.assertRaises(ValueError):
                 parse_touch_events(bytes.fromhex(raw))
 
-    def test_capability_names_host_microphone_as_live_source(self):
-        capability = dictation_capability()
+    def test_windows_exposes_opt_in_ring_audio_and_the_default_host_source(self):
+        with patch('spur_ring.live_audio.sys.platform', 'win32'):
+            capability = dictation_capability()
         self.assertTrue(capability['ring_triggered_dictation'])
-        self.assertFalse(capability['ring_live_audio'])
+        self.assertTrue(capability['ring_live_audio'])
         self.assertEqual(capability['audio_source'], 'computer_microphone')
 
 
